@@ -53,6 +53,10 @@ const DashboardDespacho = () => {
     calcularValores()
   }, [formData.costo_envio, formData.total_compra, formData.propina, formData.metodo_pago, config])
 
+  const pedidosSinAsignar = pedidos.filter(p => p.estado === 'pendiente')
+  const pedidosEnCurso = pedidos.filter(p => ['asignado', 'en_camino'].includes(p.estado))
+  const pedidosFinalizados = pedidos.filter(p => p.estado === 'entregado')
+  
   // Inicializar mapa
   useEffect(() => {
     // Verificar que Leaflet esté cargado
