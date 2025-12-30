@@ -20,6 +20,50 @@ export const obtenerConfiguracion = async () => {
   return config
 }
 
+export const obtenerClientesConDirecciones = async () => {
+  const { data, error } = await supabase
+    .from('vista_clientes_completo')
+    .select('*')
+    .order('nombre_completo')
+  
+  if (error) throw error
+  return data
+}
+
+export const obtenerDireccionesCliente = async (clienteId) => {
+  const { data, error } = await supabase
+    .from('direcciones_cliente')
+    .select('*')
+    .eq('cliente_id', clienteId)
+    .eq('activo', true)
+    .order('es_principal', { ascending: false })
+  
+  if (error) throw error
+  return data
+}
+
+export const insertarCliente = async (cliente) => {
+  const { data, error } = await supabase
+    .from('clientes')
+    .insert([cliente])
+    .select()
+    .single()
+  
+  if (error) throw error
+  return data
+}
+
+export const insertarDireccionCliente = async (direccion) => {
+  const { data, error } = await supabase
+    .from('direcciones_cliente')
+    .insert([direccion])
+    .select()
+    .single()
+  
+  if (error) throw error
+  return data
+}
+
 export const insertarPedido = async (pedido) => {
   const { data, error } = await supabase
     .from('pedidos')
@@ -60,28 +104,6 @@ export const obtenerComercios = async () => {
     .select('*')
     .eq('activo', true)
     .order('nombre')
-  
-  if (error) throw error
-  return data
-}
-
-export const obtenerClientes = async () => {
-  const { data, error } = await supabase
-    .from('clientes')
-    .select('*')
-    .eq('activo', true)
-    .order('nombre_completo')
-  
-  if (error) throw error
-  return data
-}
-
-export const insertarCliente = async (cliente) => {
-  const { data, error } = await supabase
-    .from('clientes')
-    .insert([cliente])
-    .select()
-    .single()
   
   if (error) throw error
   return data
@@ -135,7 +157,7 @@ export const subirComprobante = async (pedidoId, archivo) => {
 }
 
 export const actualizarEstadoPedido = async (pedidoId, nuevoEstado) => {
-  const { data, error} = await supabase
+  const { data, error } = await supabase
     .from('pedidos')
     .update({ estado: nuevoEstado })
     .eq('id', pedidoId)
