@@ -50,9 +50,10 @@ const DashboardDespacho = () => {
   }, [])
   
   useEffect(() => {
-        calcularValores()
-        }, [formData.costo_envio, formData.total_compra, formData.propina, formData.metodo_pago, config])
-    // Inicializar mapa
+    calcularValores()
+  }, [formData.costo_envio, formData.total_compra, formData.propina, formData.metodo_pago, config])
+
+  // Inicializar mapa
   useEffect(() => {
     if (pedidosEnCurso.length === 0) return
     
@@ -110,7 +111,6 @@ const DashboardDespacho = () => {
       mapa.remove()
     }
   }, [pedidosEnCurso])
-
 
   const cargarDatosIniciales = async () => {
     try {
