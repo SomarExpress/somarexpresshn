@@ -17,11 +17,19 @@ import {
   Menu,
   X,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Navigation,
+  Home,
+  Briefcase,
+  PlusCircle
 } from 'lucide-react'
 import {
   supabase,
   obtenerConfiguracion,
+  obtenerClientesConDirecciones,
+  obtenerDireccionesCliente,
+  insertarCliente,
+  insertarDireccionCliente,
   insertarPedido,
   obtenerPedidosActivos,
   obtenerRidersDisponibles,
@@ -33,9 +41,6 @@ import {
 } from '../lib/supabase'
 
 const DashboardDespacho = () => {
-  // =====================================================
-  // ESTADO
-  // =====================================================
   const [config, setConfig] = useState({
     porcentaje_rider: 66.66,
     porcentaje_somar: 33.34,
@@ -45,13 +50,25 @@ const DashboardDespacho = () => {
   const [pedidos, setPedidos] = useState([])
   const [riders, setRiders] = useState([])
   const [comercios, setComercios] = useState([])
+  const [clientes, setClientes] = useState([])
   
-  // Formulario de nuevo pedido
+  const [clienteSeleccionado, setClienteSeleccionado] = useState(null)
+  const [direccionesCliente, setDireccionesCliente] = useState([])
+  const [direccionSeleccionada, setDireccionSeleccionada] = useState(null)
+  const [comercioSeleccionado, setComercioSeleccionado] = useState(null)
+  const [mostrarNuevoCliente, setMostrarNuevoCliente] = useState(false)
+  const [mostrarNuevaDireccion, setMostrarNuevaDireccion] = useState(false)
+  
   const [formData, setFormData] = useState({
     tipo: 'compra',
+    cliente_id: '',
+    direccion_cliente_id: '',
     cliente_nombre: '',
     cliente_telefono: '',
     direccion_entrega: '',
+    latitud_entrega: '',
+    longitud_entrega: '',
+    referencia_entrega: '',
     comercio_id: '',
     rider_id: '',
     costo_envio: '',
@@ -61,14 +78,27 @@ const DashboardDespacho = () => {
     notas: ''
   })
   
-  // Cálculos en tiempo real
+  const [nuevoCliente, setNuevoCliente] = useState({
+    nombre_completo: '',
+    telefono: '',
+    email: ''
+  })
+  
+  const [nuevaDireccion, setNuevaDireccion] = useState({
+    alias: '',
+    direccion: '',
+    latitud: '',
+    longitud: '',
+    referencia: '',
+    es_principal: false
+  })
+  
   const [calculosActuales, setCalculosActuales] = useState({
     ganancia_rider: 0,
     utilidad_somar: 0,
     monto_cobrar_rider: 0
   })
   
-  // UI States
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
@@ -76,14 +106,9 @@ const DashboardDespacho = () => {
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [pedidosExpandidos, setPedidosExpandidos] = useState({})
 
-  // =====================================================
-  // EFFECTS
-  // =====================================================
-  
   useEffect(() => {
     cargarDatosIniciales()
     
-    // Suscripción a cambios en tiempo real
     const subscription = suscribirPedidos((payload) => {
       console.log('Cambio detectado en pedidos:', payload)
       cargarPedidos()
@@ -98,24 +123,22 @@ const DashboardDespacho = () => {
     calcularValores()
   }, [formData.costo_envio, formData.total_compra, formData.propina, formData.metodo_pago, config])
 
-  // =====================================================
-  // FUNCIONES DE CARGA
-  // =====================================================
-  
   const cargarDatosIniciales = async () => {
     try {
       setLoading(true)
-      const [configData, pedidosData, ridersData, comerciosData] = await Promise.all([
+      const [configData, pedidosData, ridersData, comerciosData, clientesData] = await Promise.all([
         obtenerConfiguracion(),
         obtenerPedidosActivos(),
         obtenerRidersDisponibles(),
-        obtenerComercios()
+        obtenerComercios(),
+        obtenerClientesConDirecciones()
       ])
       
       setConfig(configData)
       setPedidos(pedidosData)
       setRiders(ridersData)
       setComercios(comerciosData)
+      setClientes(clientesData)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -132,10 +155,6 @@ const DashboardDespacho = () => {
     }
   }
 
-  // =====================================================
-  // CÁLCULOS FINANCIEROS
-  // =====================================================
-  
   const calcularValores = () => {
     const costoEnvio = parseFloat(formData.costo_envio) || 0
     const totalCompra = parseFloat(formData.total_compra) || 0
@@ -156,16 +175,142 @@ const DashboardDespacho = () => {
     })
   }
 
-  // =====================================================
-  // HANDLERS
-  // =====================================================
-  
   const handleInputChange = (e) => {
     const { name, value } = e.target
     setFormData(prev => ({
       ...prev,
       [name]: value
     }))
+  }
+
+  const handleSeleccionarCliente = async (clienteId) => {
+    if (clienteId === 'nuevo') {
+      setMostrarNuevoCliente(true)
+      setClienteSeleccionado(null)
+      setDireccionesCliente([])
+      setDireccionSeleccionada(null)
+      setFormData(prev => ({
+        ...prev,
+        cliente_id: '',
+        direccion_cliente_id: '',
+        direccion_entrega: '',
+        latitud_entrega: '',
+        longitud_entrega: '',
+        referencia_entrega: ''
+      }))
+      return
+    }
+    
+    const cliente = clientes.find(c => c.cliente_id === clienteId)
+    setClienteSeleccionado(cliente)
+    setDireccionesCliente(cliente?.direcciones || [])
+    setMostrarNuevoCliente(false)
+    setMostrarNuevaDireccion(false)
+    
+    setFormData(prev => ({
+      ...prev,
+      cliente_id: clienteId,
+      cliente_nombre: cliente?.nombre_completo || '',
+      cliente_telefono: cliente?.telefono || ''
+    }))
+    
+    const direccionPrincipal = cliente?.direcciones?.find(d => d.es_principal)
+    if (direccionPrincipal) {
+      handleSeleccionarDireccion(direccionPrincipal)
+    }
+  }
+
+  const handleSeleccionarDireccion = (direccion) => {
+    if (direccion === 'nueva') {
+      setMostrarNuevaDireccion(true)
+      setDireccionSeleccionada(null)
+      setFormData(prev => ({
+        ...prev,
+        direccion_cliente_id: '',
+        direccion_entrega: '',
+        latitud_entrega: '',
+        longitud_entrega: '',
+        referencia_entrega: ''
+      }))
+      return
+    }
+    
+    setDireccionSeleccionada(direccion)
+    setMostrarNuevaDireccion(false)
+    setFormData(prev => ({
+      ...prev,
+      direccion_cliente_id: direccion.id,
+      direccion_entrega: direccion.direccion,
+      latitud_entrega: direccion.latitud,
+      longitud_entrega: direccion.longitud,
+      referencia_entrega: direccion.referencia || ''
+    }))
+  }
+
+  const handleSeleccionarComercio = (comercioId) => {
+    const comercio = comercios.find(c => c.id === comercioId)
+    setComercioSeleccionado(comercio)
+    setFormData(prev => ({
+      ...prev,
+      comercio_id: comercioId
+    }))
+  }
+
+  const handleCrearNuevoCliente = async () => {
+    try {
+      if (!nuevoCliente.nombre_completo) {
+        setError('El nombre del cliente es obligatorio')
+        return
+      }
+      
+      const clienteCreado = await insertarCliente(nuevoCliente)
+      
+      if (nuevaDireccion.direccion) {
+        await insertarDireccionCliente({
+          cliente_id: clienteCreado.id,
+          ...nuevaDireccion,
+          es_principal: true
+        })
+      }
+      
+      await cargarDatosIniciales()
+      
+      setMostrarNuevoCliente(false)
+      setNuevoCliente({ nombre_completo: '', telefono: '', email: '' })
+      setNuevaDireccion({ alias: '', direccion: '', latitud: '', longitud: '', referencia: '', es_principal: false })
+      
+      handleSeleccionarCliente(clienteCreado.id)
+      
+      setSuccess('✅ Cliente creado exitosamente')
+      setTimeout(() => setSuccess(null), 3000)
+    } catch (err) {
+      setError('Error al crear cliente: ' + err.message)
+    }
+  }
+
+  const handleCrearNuevaDireccion = async () => {
+    try {
+      if (!clienteSeleccionado || !nuevaDireccion.direccion) {
+        setError('Faltan datos obligatorios')
+        return
+      }
+      
+      await insertarDireccionCliente({
+        cliente_id: clienteSeleccionado.cliente_id,
+        ...nuevaDireccion
+      })
+      
+      const direccionesActualizadas = await obtenerDireccionesCliente(clienteSeleccionado.cliente_id)
+      setDireccionesCliente(direccionesActualizadas)
+      
+      setMostrarNuevaDireccion(false)
+      setNuevaDireccion({ alias: '', direccion: '', latitud: '', longitud: '', referencia: '', es_principal: false })
+      
+      setSuccess('✅ Dirección agregada exitosamente')
+      setTimeout(() => setSuccess(null), 3000)
+    } catch (err) {
+      setError('Error al crear dirección: ' + err.message)
+    }
   }
   
   const handleSubmitPedido = async (e) => {
@@ -175,16 +320,23 @@ const DashboardDespacho = () => {
       setLoading(true)
       setError(null)
       
-      // Validaciones
-      if (!formData.cliente_nombre || !formData.direccion_entrega) {
-        throw new Error('Faltan campos obligatorios')
+      if (mostrarNuevoCliente && nuevoCliente.nombre_completo) {
+        await handleCrearNuevoCliente()
+      }
+      
+      if (!formData.direccion_entrega) {
+        throw new Error('Falta la dirección de entrega')
       }
       
       const nuevoPedido = {
         tipo: formData.tipo,
-        cliente_nombre: formData.cliente_nombre,
-        cliente_telefono: formData.cliente_telefono,
+        cliente_id: formData.cliente_id || null,
+        direccion_cliente_id: formData.direccion_cliente_id || null,
+        cliente_nombre: formData.cliente_nombre || nuevoCliente.nombre_completo,
+        cliente_telefono: formData.cliente_telefono || nuevoCliente.telefono,
         direccion_entrega: formData.direccion_entrega,
+        latitud_entrega: parseFloat(formData.latitud_entrega) || null,
+        longitud_entrega: parseFloat(formData.longitud_entrega) || null,
         comercio_id: formData.comercio_id || null,
         rider_id: formData.rider_id || null,
         costo_envio: parseFloat(formData.costo_envio) || 0,
@@ -200,12 +352,16 @@ const DashboardDespacho = () => {
       
       setSuccess(`✅ Pedido ${pedidoCreado.numero_pedido} creado exitosamente`)
       
-      // Limpiar formulario
       setFormData({
         tipo: 'compra',
+        cliente_id: '',
+        direccion_cliente_id: '',
         cliente_nombre: '',
         cliente_telefono: '',
         direccion_entrega: '',
+        latitud_entrega: '',
+        longitud_entrega: '',
+        referencia_entrega: '',
         comercio_id: '',
         rider_id: '',
         costo_envio: '',
@@ -215,7 +371,13 @@ const DashboardDespacho = () => {
         notas: ''
       })
       
-      // Recargar pedidos y ocultar formulario en móvil
+      setClienteSeleccionado(null)
+      setDireccionSeleccionada(null)
+      setDireccionesCliente([])
+      setComercioSeleccionado(null)
+      setMostrarNuevoCliente(false)
+      setMostrarNuevaDireccion(false)
+      
       await cargarPedidos()
       setMostrarFormulario(false)
       
@@ -259,10 +421,6 @@ const DashboardDespacho = () => {
     }))
   }
 
-  // =====================================================
-  // RENDER HELPERS
-  // =====================================================
-  
   const getEstadoBadge = (estado) => {
     const badges = {
       pendiente: { color: 'bg-yellow-100 text-yellow-800', icon: Clock, text: 'Pendiente' },
@@ -287,13 +445,14 @@ const DashboardDespacho = () => {
     return `L ${parseFloat(valor || 0).toFixed(2)}`
   }
 
-  // =====================================================
-  // RENDER PRINCIPAL
-  // =====================================================
-  
+  const getIconoDireccion = (alias) => {
+    if (alias?.toLowerCase().includes('casa')) return <Home size={14} />
+    if (alias?.toLowerCase().includes('trabajo') || alias?.toLowerCase().includes('oficina')) return <Briefcase size={14} />
+    return <MapPin size={14} />
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      {/* Header */}
       <header className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 lg:px-8">
           <div className="flex items-center justify-between">
@@ -326,7 +485,6 @@ const DashboardDespacho = () => {
         </div>
       </header>
 
-      {/* Alertas */}
       {error && (
         <div className="max-w-7xl mx-auto px-3 sm:px-4 mt-3 sm:mt-4">
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 sm:p-4 flex items-start gap-2 sm:gap-3">
@@ -357,7 +515,6 @@ const DashboardDespacho = () => {
       <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-6 lg:px-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-6">
           
-          {/* ===== FORMULARIO DE INGRESO RÁPIDO ===== */}
           <div className={`lg:col-span-1 ${mostrarFormulario ? 'block' : 'hidden lg:block'}`}>
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-6">
               <h2 className="text-lg sm:text-xl font-bold text-slate-900 mb-3 sm:mb-4 flex items-center gap-2">
@@ -366,7 +523,6 @@ const DashboardDespacho = () => {
               </h2>
               
               <form onSubmit={handleSubmitPedido} className="space-y-3 sm:space-y-4">
-                {/* Tipo de Pedido */}
                 <div>
                   <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                     Tipo de Pedido
@@ -382,52 +538,231 @@ const DashboardDespacho = () => {
                   </select>
                 </div>
 
-                {/* Cliente */}
                 <div>
                   <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
-                    Nombre del Cliente *
+                    Cliente *
                   </label>
-                  <input
-                    type="text"
-                    name="cliente_nombre"
-                    value={formData.cliente_nombre}
-                    onChange={handleInputChange}
-                    required
+                  <select
+                    value={clienteSeleccionado?.cliente_id || ''}
+                    onChange={(e) => handleSeleccionarCliente(e.target.value)}
+                    required={!mostrarNuevoCliente}
                     className="w-full px-3 py-2 text-sm sm:text-base border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Ej: Juan Pérez"
-                  />
+                  >
+                    <option value="">-- Seleccionar Cliente --</option>
+                    {clientes.map(cliente => (
+                      <option key={cliente.cliente_id} value={cliente.cliente_id}>
+                        {cliente.nombre_completo} {cliente.telefono ? `(${cliente.telefono})` : ''}
+                      </option>
+                    ))}
+                    <option value="nuevo">➕ Nuevo Cliente</option>
+                  </select>
                 </div>
 
-                <div>
-                  <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
-                    Teléfono
-                  </label>
-                  <input
-                    type="tel"
-                    name="cliente_telefono"
-                    value={formData.cliente_telefono}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 text-sm sm:text-base border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="9999-9999"
-                  />
-                </div>
+                {mostrarNuevoCliente && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-sm text-yellow-900">Nuevo Cliente</h4>
+                      <button
+                        type="button"
+                        onClick={() => setMostrarNuevoCliente(false)}
+                        className="text-yellow-600 hover:text-yellow-800"
+                      >
+                        <XCircle size={16} />
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Nombre completo *"
+                      value={nuevoCliente.nombre_completo}
+                      onChange={(e) => setNuevoCliente(prev => ({ ...prev, nombre_completo: e.target.value }))}
+                      required
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                    <input
+                      type="tel"
+                      placeholder="Teléfono"
+                      value={nuevoCliente.telefono}
+                      onChange={(e) => setNuevoCliente(prev => ({ ...prev, telefono: e.target.value }))}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                    <input
+                      type="email"
+                      placeholder="Email (opcional)"
+                      value={nuevoCliente.email}
+                      onChange={(e) => setNuevoCliente(prev => ({ ...prev, email: e.target.value }))}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                    
+                    <div className="border-t pt-2">
+                      <p className="text-xs font-medium text-yellow-900 mb-2">Dirección Principal</p>
+                      <input
+                        type="text"
+                        placeholder="Alias (ej: Casa, Trabajo)"
+                        value={nuevaDireccion.alias}
+                        onChange={(e) => setNuevaDireccion(prev => ({ ...prev, alias: e.target.value }))}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg mb-2"
+                      />
+                      <textarea
+                        placeholder="Dirección completa *"
+                        value={nuevaDireccion.direccion}
+                        onChange={(e) => setNuevaDireccion(prev => ({ ...prev, direccion: e.target.value }))}
+                        required
+                        rows={2}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg mb-2"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="number"
+                          step="0.0000001"
+                          placeholder="Latitud"
+                          value={nuevaDireccion.latitud}
+                          onChange={(e) => setNuevaDireccion(prev => ({ ...prev, latitud: e.target.value }))}
+                          className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                        />
+                        <input
+                          type="number"
+                          step="0.0000001"
+                          placeholder="Longitud"
+                          value={nuevaDireccion.longitud}
+                          onChange={(e) => setNuevaDireccion(prev => ({ ...prev, longitud: e.target.value }))}
+                          className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                      <textarea
+                        placeholder="Referencia"
+                        value={nuevaDireccion.referencia}
+                        onChange={(e) => setNuevaDireccion(prev => ({ ...prev, referencia: e.target.value }))}
+                        rows={2}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg mt-2"
+                      />
+                    </div>
+                  </div>
+                )}
 
-                <div>
-                  <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
-                    Dirección de Entrega *
-                  </label>
-                  <textarea
-                    name="direccion_entrega"
-                    value={formData.direccion_entrega}
-                    onChange={handleInputChange}
-                    required
-                    rows={2}
-                    className="w-full px-3 py-2 text-sm sm:text-base border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Col. Palmira, Ave. República..."
-                  />
-                </div>
+                {clienteSeleccionado && direccionesCliente.length > 0 && !mostrarNuevoCliente && (
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
+                      Dirección de Entrega *
+                    </label>
+                    <select
+                      value={direccionSeleccionada?.id || ''}
+                      onChange={(e) => {
+                        const dir = direccionesCliente.find(d => d.id === e.target.value)
+                        handleSeleccionarDireccion(dir || 'nueva')
+                      }}
+                      required
+                      className="w-full px-3 py-2 text-sm sm:text-base border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">-- Seleccionar Dirección --</option>
+                      {direccionesCliente.map(direccion => (
+                        <option key={direccion.id} value={direccion.id}>
+                          {direccion.alias ? `${direccion.alias} - ` : ''}{direccion.direccion}
+                        </option>
+                      ))}
+                      <option value="nueva">➕ Nueva Dirección</option>
+                    </select>
+                    
+                    {direccionSeleccionada && (
+                      <div className="mt-2 p-2 bg-blue-50 rounded text-xs border border-blue-100">
+                        <div className="flex items-start gap-2">
+                          {getIconoDireccion(direccionSeleccionada.alias)}
+                          <div className="flex-1">
+                            <p className="font-medium">{direccionSeleccionada.direccion}</p>
+                            {direccionSeleccionada.referencia && (
+                              <p className="text-slate-600 mt-1">📝 {direccionSeleccionada.referencia}</p>
+                            )}
+                            {direccionSeleccionada.latitud && direccionSeleccionada.longitud && (
+                              <p className="text-slate-500 mt-1 flex items-center gap-1">
+                                <Navigation size={12} />
+                                {direccionSeleccionada.latitud}, {direccionSeleccionada.longitud}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
-                {/* Comercio */}
+                {mostrarNuevaDireccion && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-sm text-blue-900">Nueva Dirección</h4>
+                      <button
+                        type="button"
+                        onClick={() => setMostrarNuevaDireccion(false)}
+                        className="text-blue-600 hover:text-blue-800"
+                      >
+                        <XCircle size={16} />
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Alias (ej: Casa, Trabajo)"
+                      value={nuevaDireccion.alias}
+                      onChange={(e) => setNuevaDireccion(prev => ({ ...prev, alias: e.target.value }))}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                    <textarea
+                      placeholder="Dirección completa *"
+                      value={nuevaDireccion.direccion}
+                      onChange={(e) => setNuevaDireccion(prev => ({ ...prev, direccion: e.target.value }))}
+                      required
+                      rows={2}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        step="0.0000001"
+                        placeholder="Latitud"
+                        value={nuevaDireccion.latitud}
+                        onChange={(e) => setNuevaDireccion(prev => ({ ...prev, latitud: e.target.value }))}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                      />
+                      <input
+                        type="number"
+                        step="0.0000001"
+                        placeholder="Longitud"
+                        value={nuevaDireccion.longitud}
+                        onChange={(e) => setNuevaDireccion(prev => ({ ...prev, longitud: e.target.value }))}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                      />
+                    </div>
+                    <textarea
+                      placeholder="Referencia"
+                      value={nuevaDireccion.referencia}
+                      onChange={(e) => setNuevaDireccion(prev => ({ ...prev, referencia: e.target.value }))}
+                      rows={2}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCrearNuevaDireccion}
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded-lg"
+                    >
+                      Guardar Dirección
+                    </button>
+                  </div>
+                )}
+
+                {!clienteSeleccionado && !mostrarNuevoCliente && (
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
+                      Dirección de Entrega *
+                    </label>
+                    <textarea
+                      name="direccion_entrega"
+                      value={formData.direccion_entrega}
+                      onChange={handleInputChange}
+                      required
+                      rows={2}
+                      className="w-full px-3 py-2 text-sm sm:text-base border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Col. Palmira, Ave. República..."
+                    />
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                     Comercio (opcional)
@@ -435,7 +770,7 @@ const DashboardDespacho = () => {
                   <select
                     name="comercio_id"
                     value={formData.comercio_id}
-                    onChange={handleInputChange}
+                    onChange={(e) => handleSeleccionarComercio(e.target.value)}
                     className="w-full px-3 py-2 text-sm sm:text-base border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
                     <option value="">-- Seleccionar --</option>
@@ -445,9 +780,20 @@ const DashboardDespacho = () => {
                       </option>
                     ))}
                   </select>
+                  {comercioSeleccionado && comercioSeleccionado.latitud && (
+                    <div className="mt-2 p-2 bg-green-50 rounded text-xs border border-green-100">
+                      <p className="font-medium">{comercioSeleccionado.direccion}</p>
+                      {comercioSeleccionado.referencia && (
+                        <p className="text-slate-600 mt-1">📝 {comercioSeleccionado.referencia}</p>
+                      )}
+                      <p className="text-slate-500 mt-1 flex items-center gap-1">
+                        <Navigation size={12} />
+                        {comercioSeleccionado.latitud}, {comercioSeleccionado.longitud}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
-                {/* Rider */}
                 <div>
                   <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                     Asignar Rider (opcional)
@@ -467,7 +813,6 @@ const DashboardDespacho = () => {
                   </select>
                 </div>
 
-                {/* Financiero */}
                 <div className="grid grid-cols-2 gap-2 sm:gap-3">
                   <div>
                     <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
@@ -519,7 +864,6 @@ const DashboardDespacho = () => {
                   />
                 </div>
 
-                {/* Método de Pago */}
                 <div>
                   <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                     Método de Pago
@@ -535,7 +879,6 @@ const DashboardDespacho = () => {
                   </select>
                 </div>
 
-                {/* Notas */}
                 <div>
                   <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                     Notas
@@ -550,7 +893,6 @@ const DashboardDespacho = () => {
                   />
                 </div>
 
-                {/* CÁLCULOS EN TIEMPO REAL */}
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-3 sm:p-4 space-y-2 border border-blue-200">
                   <h3 className="font-semibold text-slate-900 text-xs sm:text-sm mb-2 sm:mb-3 flex items-center gap-2">
                     <DollarSign size={14} className="text-blue-600 sm:w-4 sm:h-4" />
@@ -588,7 +930,6 @@ const DashboardDespacho = () => {
                   </div>
                 </div>
 
-                {/* Botón Submit */}
                 <button
                   type="submit"
                   disabled={loading}
@@ -609,7 +950,6 @@ const DashboardDespacho = () => {
               </form>
             </div>
 
-            {/* VISTA PREVIA DEL RIDER - Solo desktop */}
             <div className="hidden lg:block bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl shadow-sm border border-green-200 p-6 mt-6">
               <h3 className="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
                 <User size={20} className="text-green-600" />
@@ -640,7 +980,6 @@ const DashboardDespacho = () => {
             </div>
           </div>
 
-          {/* ===== LISTA DE PEDIDOS ACTIVOS ===== */}
           <div className="lg:col-span-2">
             <div className="bg-white rounded-xl shadow-sm border border-slate-200">
               <div className="p-4 sm:p-6 border-b border-slate-200">
@@ -664,7 +1003,6 @@ const DashboardDespacho = () => {
                         key={pedido.id}
                         className="bg-slate-50 rounded-lg p-3 sm:p-4 border border-slate-200 hover:shadow-md transition-shadow"
                       >
-                        {/* Header del Pedido */}
                         <div className="flex items-start justify-between mb-2 sm:mb-3">
                           <div className="flex-1">
                             <h3 className="font-bold text-base sm:text-lg text-slate-900">
@@ -683,7 +1021,6 @@ const DashboardDespacho = () => {
                           {getEstadoBadge(pedido.estado)}
                         </div>
 
-                        {/* Info Compacta Siempre Visible */}
                         <div className="grid grid-cols-2 gap-2 sm:gap-3 mb-3 text-xs sm:text-sm">
                           <div>
                             <p className="text-slate-500 text-xs">Cliente</p>
@@ -697,7 +1034,6 @@ const DashboardDespacho = () => {
                           </div>
                         </div>
 
-                        {/* Desglose Financiero Compacto */}
                         <div className="bg-white rounded-lg p-2 sm:p-3 border border-slate-200 mb-3">
                           <div className="grid grid-cols-3 gap-2 text-xs sm:text-sm">
                             <div>
@@ -721,19 +1057,22 @@ const DashboardDespacho = () => {
                           </div>
                         </div>
 
-                        {/* Sección Expandible */}
                         {expandido && (
                           <div className="space-y-3 mb-3 border-t pt-3">
-                            {/* Dirección */}
                             <div>
                               <p className="text-xs text-slate-500 mb-1">Dirección</p>
                               <p className="text-xs sm:text-sm text-slate-700 flex items-start gap-1">
                                 <MapPin size={12} className="flex-shrink-0 mt-0.5 sm:w-3.5 sm:h-3.5" />
                                 {pedido.direccion_entrega}
                               </p>
+                              {pedido.latitud_entrega && pedido.longitud_entrega && (
+                                <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+                                  <Navigation size={10} />
+                                  {pedido.latitud_entrega}, {pedido.longitud_entrega}
+                                </p>
+                              )}
                             </div>
 
-                            {/* Desglose Detallado */}
                             <div className="bg-blue-50 rounded-lg p-2 sm:p-3 border border-blue-100">
                               <div className="grid grid-cols-2 gap-2 text-xs sm:text-sm">
                                 <div>
@@ -751,7 +1090,6 @@ const DashboardDespacho = () => {
                               </div>
                             </div>
 
-                            {/* Módulo de Transferencias */}
                             {pedido.metodo_pago === 'transferencia' && (
                               <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 sm:p-3">
                                 <h4 className="text-xs sm:text-sm font-semibold text-blue-900 mb-2 flex items-center gap-2">
@@ -799,32 +1137,62 @@ const DashboardDespacho = () => {
                           </div>
                         )}
 
-                        {/* Acciones */}
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => togglePedidoExpandido(pedido.id)}
-                            className="flex-1 bg-slate-600 hover:bg-slate-700 text-white text-xs sm:text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-1"
-                          >
-                            {expandido ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                            {expandido ? 'Menos' : 'Más'}
-                          </button>
-                          
+                        <div className="flex flex-col gap-2">
                           {pedido.estado === 'pendiente' && (
-                            <button
-                              onClick={() => handleCambiarEstado(pedido.id, 'en_camino')}
-                              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-medium py-2 rounded-lg transition-colors"
-                            >
-                              Iniciar
-                            </button>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleCambiarEstado(pedido.id, 'en_camino')}
+                                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-1"
+                              >
+                                <TruckIcon size={14} className="sm:w-4 sm:h-4" />
+                                Iniciar Entrega
+                              </button>
+                              <button
+                                onClick={() => togglePedidoExpandido(pedido.id)}
+                                className="px-3 sm:px-4 bg-slate-600 hover:bg-slate-700 text-white text-xs sm:text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center"
+                              >
+                                {expandido ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                <span className="hidden sm:inline ml-1">{expandido ? 'Menos' : 'Más'}</span>
+                              </button>
+                            </div>
+                          )}
+                          
+                          {pedido.estado === 'asignado' && (
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleCambiarEstado(pedido.id, 'en_camino')}
+                                className="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-1"
+                              >
+                                <TruckIcon size={14} className="sm:w-4 sm:h-4" />
+                                Iniciar Ruta
+                              </button>
+                              <button
+                                onClick={() => togglePedidoExpandido(pedido.id)}
+                                className="px-3 sm:px-4 bg-slate-600 hover:bg-slate-700 text-white text-xs sm:text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center"
+                              >
+                                {expandido ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                <span className="hidden sm:inline ml-1">{expandido ? 'Menos' : 'Más'}</span>
+                              </button>
+                            </div>
                           )}
                           
                           {pedido.estado === 'en_camino' && (
-                            <button
-                              onClick={() => handleCambiarEstado(pedido.id, 'entregado')}
-                              className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs sm:text-sm font-medium py-2 rounded-lg transition-colors"
-                            >
-                              Entregar
-                            </button>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleCambiarEstado(pedido.id, 'entregado')}
+                                className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs sm:text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-1"
+                              >
+                                <CheckCircle size={14} className="sm:w-4 sm:h-4" />
+                                Marcar Entregado
+                              </button>
+                              <button
+                                onClick={() => togglePedidoExpandido(pedido.id)}
+                                className="px-3 sm:px-4 bg-slate-600 hover:bg-slate-700 text-white text-xs sm:text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center"
+                              >
+                                {expandido ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                <span className="hidden sm:inline ml-1">{expandido ? 'Menos' : 'Más'}</span>
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
