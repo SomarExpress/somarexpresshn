@@ -559,7 +559,8 @@ const DashboardDespacho = () => {
               )}
             </div>
           </div>
-
+        </div>
+      </div>
 
       <button
         onClick={() => setMostrarFormulario(true)}
