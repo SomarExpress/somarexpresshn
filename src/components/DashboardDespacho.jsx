@@ -248,9 +248,6 @@ const DashboardDespacho = () => {
   const pedidosEnCurso = pedidos.filter(p => ['asignado', 'en_camino'].includes(p.estado))
   const pedidosFinalizados = pedidos.filter(p => p.estado === 'entregado')
 
-// ============================================
-// SECCIÓN 2: COMPONENTE TARJETA + RENDER
-// ============================================
 
   const TarjetaPedido = ({ pedido }) => (
     <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 hover:shadow-md transition-shadow">
@@ -506,9 +503,6 @@ const DashboardDespacho = () => {
         <Plus size={28} />
       </button>
 
-// ============================================
-// SECCIÓN 3: MODAL FORMULARIO (PARTE 1)
-// ============================================
 
       {mostrarFormulario && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
@@ -780,9 +774,6 @@ const DashboardDespacho = () => {
                 )}
               </div>
 
-// ============================================
-// SECCIÓN 4: MODAL FORMULARIO (PARTE 2) + CIERRE
-// ============================================
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Asignar Rider (opcional)</label>
