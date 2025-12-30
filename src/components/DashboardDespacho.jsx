@@ -248,7 +248,7 @@ const DashboardDespacho = () => {
   const pedidosEnCurso = pedidos.filter(p => ['asignado', 'en_camino'].includes(p.estado))
   const pedidosFinalizados = pedidos.filter(p => p.estado === 'entregado')
 
-  // ============================================
+// ============================================
 // SECCIÓN 2: COMPONENTE TARJETA + RENDER
 // ============================================
 
@@ -780,7 +780,7 @@ const DashboardDespacho = () => {
                 )}
               </div>
 
-              // ============================================
+// ============================================
 // SECCIÓN 4: MODAL FORMULARIO (PARTE 2) + CIERRE
 // ============================================
 
