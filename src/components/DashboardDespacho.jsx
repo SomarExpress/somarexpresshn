@@ -43,6 +43,18 @@ const DashboardDespacho = () => {
   const [mostrarSidebar, setMostrarSidebar] = useState(false)
   const [vistaActual, setVistaActual] = useState('despacho')
 
+  // ============================================
+  // IMPORTANTE: DEFINIR PEDIDOS FILTRADOS AQUÍ
+  // ANTES DE LOS useEffect
+  // ============================================
+  const pedidosSinAsignar = pedidos.filter(p => p.estado === 'pendiente')
+  const pedidosEnCurso = pedidos.filter(p => ['asignado', 'en_camino'].includes(p.estado))
+  const pedidosFinalizados = pedidos.filter(p => p.estado === 'entregado')
+
+  // ============================================
+  // AHORA SÍ LOS useEffect
+  // ============================================
+  
   useEffect(() => {
     cargarDatosIniciales()
     const subscription = suscribirPedidos(() => cargarPedidos())
@@ -53,10 +65,6 @@ const DashboardDespacho = () => {
     calcularValores()
   }, [formData.costo_envio, formData.total_compra, formData.propina, formData.metodo_pago, config])
 
-  const pedidosSinAsignar = pedidos.filter(p => p.estado === 'pendiente')
-  const pedidosEnCurso = pedidos.filter(p => ['asignado', 'en_camino'].includes(p.estado))
-  const pedidosFinalizados = pedidos.filter(p => p.estado === 'entregado')
-  
   // Inicializar mapa
   useEffect(() => {
     // Verificar que Leaflet esté cargado
@@ -131,6 +139,10 @@ const DashboardDespacho = () => {
     }
   }, [pedidosEnCurso])
 
+  // ============================================
+  // FUNCIONES
+  // ============================================
+
   const cargarDatosIniciales = async () => {
     try {
       setLoading(true)
@@ -172,6 +184,7 @@ const DashboardDespacho = () => {
       monto_cobrar_rider: montoCobrarRider.toFixed(2)
     })
   }
+
 
   const handleInputChange = (e) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
