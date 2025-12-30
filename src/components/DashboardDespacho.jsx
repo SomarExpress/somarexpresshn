@@ -610,24 +610,25 @@ const DashboardDespacho = () => {
                         rows={2}
                         className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg mb-2"
                       />
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="number"
-                          step="0.0000001"
-                          placeholder="Latitud"
-                          value={nuevaDireccion.latitud}
-                          onChange={(e) => setNuevaDireccion(prev => ({ ...prev, latitud: e.target.value }))}
-                          className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-                        />
-                        <input
-                          type="number"
-                          step="0.0000001"
-                          placeholder="Longitud"
-                          value={nuevaDireccion.longitud}
-                          onChange={(e) => setNuevaDireccion(prev => ({ ...prev, longitud: e.target.value }))}
-                          className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-                        />
-                      </div>
+<div>
+  <input
+    type="text"
+    placeholder="Coordenadas: 15.6742397679707, -87.94167327463374"
+    value={`${nuevaDireccion.latitud || ''}${nuevaDireccion.latitud && nuevaDireccion.longitud ? ', ' : ''}${nuevaDireccion.longitud || ''}`}
+    onChange={(e) => {
+      const coords = e.target.value.split(',').map(c => c.trim())
+      setNuevaDireccion(prev => ({
+        ...prev,
+        latitud: coords[0] || '',
+        longitud: coords[1] || ''
+      }))
+    }}
+    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+  />
+  <p className="text-xs text-slate-500 mt-1">
+    Pega las coordenadas de Google Maps (lat, lon)
+  </p>
+</div>
                       <textarea
                         placeholder="Referencia"
                         value={nuevaDireccion.referencia}
@@ -711,24 +712,25 @@ const DashboardDespacho = () => {
                       rows={2}
                       className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
                     />
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="number"
-                        step="0.0000001"
-                        placeholder="Latitud"
-                        value={nuevaDireccion.latitud}
-                        onChange={(e) => setNuevaDireccion(prev => ({ ...prev, latitud: e.target.value }))}
-                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-                      />
-                      <input
-                        type="number"
-                        step="0.0000001"
-                        placeholder="Longitud"
-                        value={nuevaDireccion.longitud}
-                        onChange={(e) => setNuevaDireccion(prev => ({ ...prev, longitud: e.target.value }))}
-                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-                      />
-                    </div>
+<div>
+  <input
+    type="text"
+    placeholder="Coordenadas: 15.6742397679707, -87.94167327463374"
+    value={`${nuevaDireccion.latitud || ''}${nuevaDireccion.latitud && nuevaDireccion.longitud ? ', ' : ''}${nuevaDireccion.longitud || ''}`}
+    onChange={(e) => {
+      const coords = e.target.value.split(',').map(c => c.trim())
+      setNuevaDireccion(prev => ({
+        ...prev,
+        latitud: coords[0] || '',
+        longitud: coords[1] || ''
+      }))
+    }}
+    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+  />
+  <p className="text-xs text-slate-500 mt-1">
+    Pega las coordenadas de Google Maps (lat, lon)
+  </p>
+</div>
                     <textarea
                       placeholder="Referencia"
                       value={nuevaDireccion.referencia}
