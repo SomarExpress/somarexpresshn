@@ -9,7 +9,7 @@ import {
   obtenerPerfilRider, obtenerPedidosDisponibles, obtenerPedidosAsignados,
   aceptarPedido, actualizarEstadoPedido, subirComprobante, obtenerConfiguracion,
   suscribirPedidosRider, actualizarEfectivoRider, obtenerEstadisticasRider,
-  calcularNivelRider
+  calcularNivelRider, calcularDistanciaPedido
 } from '../lib/rider-api'
 import { supabase } from '../lib/supabase'
 
@@ -122,7 +122,6 @@ const RiderApp = () => {
       setPedidoActivo(null)
     }
   }
-
   
   const handleTouchStart = (e, pedido) => {
     if (pedidoActivo) return // Ya tiene un pedido activo
@@ -209,7 +208,6 @@ const RiderApp = () => {
       setArchivoComprobante(file)
     }
   }
-
   
   const renderBotonAccion = () => {
     if (!pedidoActivo) return null
@@ -322,7 +320,6 @@ const RiderApp = () => {
         return null
     }
   }
-
   
   const formatearMoneda = (valor) => `L ${parseFloat(valor || 0).toFixed(2)}`
   
@@ -341,7 +338,6 @@ const RiderApp = () => {
   const nivel = estadisticas ? calcularNivelRider(estadisticas.totalPedidos) : { nivel: 'Novato', color: 'blue' }
   const guacaBloqueada = parseFloat(rider?.saldo_efectivo || 0) >= config.limite_guaca
 
-  
   if (loading && !rider) {
     return (
       <div className={`min-h-screen ${modoOscuro ? 'bg-slate-900' : 'bg-slate-50'} flex items-center justify-center`}>
@@ -436,7 +432,6 @@ const RiderApp = () => {
           </p>
         </div>
       </div>
-
       <div className="px-4 mt-6">
         {pedidoActivo ? (
           /* Pedido Activo */
@@ -564,6 +559,7 @@ const RiderApp = () => {
             ) : (
               pedidosDisponibles.map(pedido => {
                 const gananciaTotal = parseFloat(pedido.ganancia_rider || 0) + parseFloat(pedido.propina || 0)
+                const distancia = calcularDistanciaPedido(pedido)
                 
                 return (
                   <div
@@ -594,7 +590,7 @@ const RiderApp = () => {
                           {pedido.tipo === 'compra' ? '🛒 Compra' : '📦 Recolecta'}
                         </span>
                         <span className={`text-xs ${modoOscuro ? 'text-slate-400' : 'text-slate-600'}`}>
-                          {pedido.distancia_km ? `${pedido.distancia_km.toFixed(1)} km` : 'Sin calcular'}
+                          {distancia ? `${distancia.toFixed(1)} km` : 'Sin calcular'}
                         </span>
                       </div>
 
