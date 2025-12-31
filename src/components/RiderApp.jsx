@@ -70,11 +70,11 @@ const RiderApp = () => {
       setConfig(configData)
       
       // Obtener estadísticas
-      const stats = await obtenerEstadisticasRider(user.id)
+      const stats = await obtenerEstadisticasRider(perfilRider.id)
       setEstadisticas(stats)
       
       // Cargar pedidos
-      await cargarPedidos(user.id)
+      await cargarPedidos(perfilRider.id)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -83,8 +83,10 @@ const RiderApp = () => {
   }
 
   const cargarPedidos = async (riderId = rider?.id) => {
-    try {
-      const [disponibles, asignados] = await Promise.all([
+  try {
+    if (!riderId) return
+    
+    const [disponibles, asignados] = await Promise.all([
         obtenerPedidosDisponibles(),
         obtenerPedidosAsignados(riderId)
       ])
