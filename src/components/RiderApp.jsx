@@ -3,6 +3,7 @@ import {
   Package, MapPin, TruckIcon, CheckCircle, Camera, Clock, DollarSign,
   Navigation, Phone, MessageSquare, AlertCircle, Menu, X, Wallet, ArrowLeft
 } from 'lucide-react'
+import { supabase } from '../lib/supabase'
 import {
   obtenerPerfilRider, obtenerPedidosDisponibles, obtenerPedidosAsignados,
   aceptarPedido, actualizarEstadoPedido, subirComprobante, obtenerConfiguracion,
