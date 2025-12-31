@@ -1,9 +1,5 @@
 import { supabase } from './supabase'
 
-// ============================================
-// FUNCIONES PARA EL RIDER - VERSION FINAL
-// ============================================
-
 // Obtener perfil del rider
 export const obtenerPerfilRider = async (userId) => {
   try {
