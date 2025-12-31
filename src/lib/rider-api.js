@@ -1,6 +1,5 @@
 import { supabase } from './supabase'
 
-
 // Obtener perfil del rider
 export const obtenerPerfilRider = async (userId) => {
   try {
@@ -398,4 +397,63 @@ export const calcularNivelRider = (totalPedidos) => {
   if (totalPedidos >= 200) return { nivel: 'Plata', siguiente: 500, color: 'gray' }
   if (totalPedidos >= 50) return { nivel: 'Bronce', siguiente: 200, color: 'orange' }
   return { nivel: 'Novato', siguiente: 50, color: 'blue' }
+}
+
+
+// Función auxiliar para convertir grados a radianes
+const toRad = (valor) => {
+  return valor * Math.PI / 180
+}
+
+/**
+ * Calcula la distancia entre dos puntos usando la fórmula Haversine
+ * @param {number} lat1 - Latitud del punto 1
+ * @param {number} lon1 - Longitud del punto 1
+ * @param {number} lat2 - Latitud del punto 2
+ * @param {number} lon2 - Longitud del punto 2
+ * @returns {number} Distancia en kilómetros
+ */
+export const calcularDistancia = (lat1, lon1, lat2, lon2) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) {
+    return null
+  }
+
+  const R = 6371 // Radio de la Tierra en km
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  const distancia = R * c
+  
+  return distancia
+}
+
+/**
+ * Calcula la distancia de un pedido (comercio -> cliente)
+ * @param {object} pedido - Objeto del pedido con coordenadas
+ * @returns {number|null} Distancia en km o null si no hay coordenadas
+ */
+export const calcularDistanciaPedido = (pedido) => {
+  try {
+    // Si el pedido tiene comercio y dirección de entrega
+    if (pedido.comercio?.latitud && pedido.comercio?.longitud && 
+        pedido.latitud_entrega && pedido.longitud_entrega) {
+      return calcularDistancia(
+        pedido.comercio.latitud,
+        pedido.comercio.longitud,
+        pedido.latitud_entrega,
+        pedido.longitud_entrega
+      )
+    }
+    
+    return null
+  } catch (error) {
+    console.error('Error calculando distancia:', error)
+    return null
+  }
 }
