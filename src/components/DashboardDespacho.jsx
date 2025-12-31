@@ -43,18 +43,6 @@ const DashboardDespacho = () => {
   const [mostrarSidebar, setMostrarSidebar] = useState(false)
   const [vistaActual, setVistaActual] = useState('despacho')
 
-  // ============================================
-  // IMPORTANTE: DEFINIR PEDIDOS FILTRADOS AQUÍ
-  // ANTES DE LOS useEffect
-  // ============================================
-  const pedidosSinAsignar = pedidos.filter(p => p.estado === 'pendiente')
-  const pedidosEnCurso = pedidos.filter(p => ['asignado', 'en_camino'].includes(p.estado))
-  const pedidosFinalizados = pedidos.filter(p => p.estado === 'entregado')
-
-  // ============================================
-  // AHORA SÍ LOS useEffect
-  // ============================================
-  
   useEffect(() => {
     cargarDatosIniciales()
     const subscription = suscribirPedidos(() => cargarPedidos())
@@ -64,84 +52,6 @@ const DashboardDespacho = () => {
   useEffect(() => {
     calcularValores()
   }, [formData.costo_envio, formData.total_compra, formData.propina, formData.metodo_pago, config])
-
-  // Inicializar mapa
-  useEffect(() => {
-    // Verificar que Leaflet esté cargado
-    if (typeof window.L === 'undefined') {
-      console.log('Esperando a que Leaflet cargue...')
-      return
-    }
-
-    if (pedidosEnCurso.length === 0) return
-    
-    const contenedor = document.getElementById('mapa-deliveries')
-    if (!contenedor) return
-    
-    // Limpiar mapa anterior si existe
-    contenedor.innerHTML = ''
-    
-    const centroTegus = [14.0723, -87.1921]
-    
-    try {
-      const mapa = window.L.map('mapa-deliveries').setView(centroTegus, 13)
-      
-      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '© OpenStreetMap'
-      }).addTo(mapa)
-      
-      const bounds = []
-      
-      pedidosEnCurso.forEach(pedido => {
-        if (pedido.latitud_entrega && pedido.longitud_entrega) {
-          const coords = [pedido.latitud_entrega, pedido.longitud_entrega]
-          bounds.push(coords)
-          
-          const iconoColor = pedido.estado === 'asignado' ? 'blue' : 'purple'
-          
-          const marker = window.L.marker(coords, {
-            icon: window.L.divIcon({
-              className: 'custom-marker',
-              html: `<div style="background: ${iconoColor === 'blue' ? '#3B82F6' : '#8B5CF6'}; width: 30px; height: 30px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">${pedido.numero_pedido?.split('-')[1] || '?'}</div>`,
-              iconSize: [30, 30],
-              iconAnchor: [15, 15]
-            })
-          }).addTo(mapa)
-          
-          marker.bindPopup(`
-            <div style="padding: 8px; min-width: 200px;">
-              <h4 style="font-weight: bold; margin-bottom: 8px; color: #1e293b;">${pedido.numero_pedido}</h4>
-              <p style="font-size: 13px; margin: 4px 0;"><strong>Cliente:</strong> ${pedido.cliente_nombre}</p>
-              <p style="font-size: 12px; margin: 4px 0; color: #64748b;">${pedido.direccion_entrega}</p>
-              ${pedido.rider_nombre ? `<p style="font-size: 12px; margin: 4px 0;"><strong>Rider:</strong> ${pedido.rider_nombre}</p>` : ''}
-              <p style="font-size: 12px; margin-top: 8px; padding: 4px 8px; background: ${iconoColor === 'blue' ? '#DBEAFE' : '#E9D5FF'}; border-radius: 4px; text-align: center; font-weight: 600; color: ${iconoColor === 'blue' ? '#1E40AF' : '#6B21A8'};">
-                ${pedido.estado === 'asignado' ? 'ASIGNADO' : 'EN RUTA'}
-              </p>
-            </div>
-          `)
-        }
-      })
-      
-      if (bounds.length > 0) {
-        mapa.fitBounds(bounds, { padding: [50, 50] })
-      }
-      
-      return () => {
-        try {
-          mapa.remove()
-        } catch (err) {
-          console.log('Error al limpiar mapa:', err)
-        }
-      }
-    } catch (error) {
-      console.error('Error al inicializar mapa:', error)
-    }
-  }, [pedidosEnCurso])
-
-  // ============================================
-  // FUNCIONES
-  // ============================================
 
   const cargarDatosIniciales = async () => {
     try {
@@ -184,7 +94,6 @@ const DashboardDespacho = () => {
       monto_cobrar_rider: montoCobrarRider.toFixed(2)
     })
   }
-
 
   const handleInputChange = (e) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
@@ -338,7 +247,6 @@ const DashboardDespacho = () => {
   const pedidosSinAsignar = pedidos.filter(p => p.estado === 'pendiente')
   const pedidosEnCurso = pedidos.filter(p => ['asignado', 'en_camino'].includes(p.estado))
   const pedidosFinalizados = pedidos.filter(p => p.estado === 'entregado')
-
 
   const TarjetaPedido = ({ pedido }) => (
     <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 hover:shadow-md transition-shadow">
@@ -571,25 +479,17 @@ const DashboardDespacho = () => {
             </div>
           </div>
 
-<div className="bg-white rounded-lg border border-slate-200 p-6">
+          <div className="bg-white rounded-lg border border-slate-200 p-6">
             <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
               <Map size={20} className="text-blue-600" />
-              Mapa de Deliveries Activos ({pedidosEnCurso.length})
+              Mapa de Deliveries Activos
             </h3>
-            <div className="relative">
-              <div 
-                id="mapa-deliveries" 
-                className="rounded-lg h-96 border border-slate-300"
-                style={{ minHeight: '400px' }}
-              ></div>
-              {pedidosEnCurso.length === 0 && (
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-50 bg-opacity-90 rounded-lg">
-                  <div className="text-center">
-                    <TruckIcon size={48} className="mx-auto text-slate-300 mb-2" />
-                    <p className="text-slate-500 text-sm">No hay deliveries activos</p>
-                  </div>
-                </div>
-              )}
+            <div className="bg-slate-100 rounded-lg h-64 flex items-center justify-center">
+              <div className="text-center">
+                <Map size={48} className="mx-auto text-slate-300 mb-2" />
+                <p className="text-slate-500 text-sm">Integración con Google Maps próximamente</p>
+                <p className="text-xs text-slate-400 mt-1">{pedidosEnCurso.length} deliveries activos</p>
+              </div>
             </div>
           </div>
         </div>
@@ -1029,3 +929,4 @@ const DashboardDespacho = () => {
 }
 
 export default DashboardDespacho
+              
