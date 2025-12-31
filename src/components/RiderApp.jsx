@@ -44,7 +44,7 @@ const RiderApp = () => {
   useEffect(() => {
     if (!rider) return
     
-    const channel = suscribirPedidosRider(rider.id, (payload) => {
+    const channel = suscribirPedidosRider(rider.user_id, (payload) => {
       cargarPedidos()
     })
     
@@ -53,7 +53,7 @@ const RiderApp = () => {
     }
   }, [rider])
 
-const cargarDatosIniciales = async () => {
+  const cargarDatosIniciales = async () => {
     try {
       setLoading(true)
       setError(null)
@@ -65,66 +65,37 @@ const cargarDatosIniciales = async () => {
       
       console.log('👤 Usuario autenticado:', user.email, user.id)
       
-// Obtener perfil del rider
-export const obtenerPerfilRider = async (userId) => {
-  try {
-    console.log('🔍 Buscando rider con user_id:', userId)
-    
-    const { data, error } = await supabase
-      .from('riders')
-      .select('id, user_id, nombre_completo, email, telefono, saldo_efectivo, activo, verificado')
-      .eq('user_id', userId)
-      .limit(1)
-    
-    if (error) {
-      console.error('❌ Error en query de rider:', error)
-      throw error
-    }
-    
-    console.log('📊 Resultado de query riders:', data)
-    
-    // Si no existe el rider, crear uno básico
-    if (!data || data.length === 0) {
-      console.log('⚠️ No existe rider, creando uno nuevo...')
-      
-      const { data: user } = await supabase.auth.getUser()
-      const nuevoRider = {
-        user_id: userId,
-        nombre_completo: user.user.email?.split('@')[0] || 'Rider',
-        email: user.user.email,
-        telefono: '',
-        saldo_efectivo: 0,
-        activo: true,
-        verificado: false
+      // Obtener perfil del rider
+      const perfilRider = await obtenerPerfilRider(user.id)
+      if (!perfilRider) {
+        throw new Error('No se encontró el perfil del rider. Por favor contacta al administrador.')
       }
       
-      const { data: riderCreado, error: errorCrear } = await supabase
-        .from('riders')
-        .insert(nuevoRider)
-        .select('id, user_id, nombre_completo, email, telefono, saldo_efectivo, activo, verificado')
+      console.log('✅ Perfil del rider cargado:', perfilRider)
+      setRider(perfilRider)
       
-      if (errorCrear) {
-        console.error('❌ Error creando rider:', errorCrear)
-        throw errorCrear
-      }
+      // Obtener configuración
+      const configData = await obtenerConfiguracion()
+      console.log('⚙️ Configuración cargada:', configData)
+      setConfig(configData)
       
-      console.log('✅ Rider creado:', riderCreado[0])
-      return riderCreado[0]
+      // Obtener estadísticas
+      const stats = await obtenerEstadisticasRider(perfilRider.user_id)
+      console.log('📊 Estadísticas cargadas:', stats)
+      setEstadisticas(stats)
+      
+      // Cargar pedidos
+      await cargarPedidos(perfilRider.user_id)
+      
+    } catch (err) {
+      console.error('❌ Error en cargarDatosIniciales:', err)
+      setError(err.message || 'Error al cargar datos iniciales')
+    } finally {
+      setLoading(false)
     }
-    
-    const rider = data[0]
-    console.log('✅ Rider encontrado - ID:', rider.id, '(tipo:', typeof rider.id, ')')
-    console.log('✅ Rider completo:', rider)
-    
-    return rider
-    
-  } catch (error) {
-    console.error('❌ Error en obtenerPerfilRider:', error)
-    throw error
   }
-}
 
-const cargarPedidos = async (riderId = rider?.id) => {
+  const cargarPedidos = async (riderId = rider?.user_id) => {
     try {
       // Validar que tenemos un riderId
       if (!riderId) {
@@ -147,11 +118,11 @@ const cargarPedidos = async (riderId = rider?.id) => {
       
     } catch (err) {
       console.error('❌ Error cargando pedidos:', err)
-      // No mostrar error al usuario, solo en consola
       setPedidosDisponibles([])
       setPedidoActivo(null)
     }
   }
+
   
   const handleTouchStart = (e, pedido) => {
     if (pedidoActivo) return // Ya tiene un pedido activo
@@ -182,7 +153,7 @@ const cargarPedidos = async (riderId = rider?.id) => {
   const handleAceptarPedido = async (pedidoId) => {
     try {
       setLoading(true)
-      await aceptarPedido(pedidoId, rider.id)
+      await aceptarPedido(pedidoId, rider.user_id)
       setSuccess('✅ Pedido aceptado')
       await cargarPedidos()
       setTimeout(() => setSuccess(null), 2000)
@@ -192,10 +163,6 @@ const cargarPedidos = async (riderId = rider?.id) => {
       setLoading(false)
     }
   }
-
-  // ============================================
-  // MÁQUINA DE ESTADOS
-  // ============================================
   
   const handleCambiarEstado = async (nuevoEstado, datosExtra = {}) => {
     try {
@@ -220,7 +187,7 @@ const cargarPedidos = async (riderId = rider?.id) => {
       // Si finaliza el pedido, actualizar efectivo
       if (nuevoEstado === 'entregado' && pedidoActivo.metodo_pago === 'efectivo') {
         const nuevoEfectivo = parseFloat(rider.saldo_efectivo) + parseFloat(pedidoActivo.monto_cobrar_rider)
-        await actualizarEfectivoRider(rider.id, nuevoEfectivo)
+        await actualizarEfectivoRider(rider.user_id, nuevoEfectivo)
         setRider(prev => ({ ...prev, saldo_efectivo: nuevoEfectivo }))
       }
       
@@ -243,9 +210,6 @@ const cargarPedidos = async (riderId = rider?.id) => {
     }
   }
 
-  // ============================================
-  // RENDERIZADO DE BOTÓN DE ACCIÓN
-  // ============================================
   
   const renderBotonAccion = () => {
     if (!pedidoActivo) return null
@@ -359,9 +323,6 @@ const cargarPedidos = async (riderId = rider?.id) => {
     }
   }
 
-  // ============================================
-  // UTILIDADES
-  // ============================================
   
   const formatearMoneda = (valor) => `L ${parseFloat(valor || 0).toFixed(2)}`
   
@@ -380,9 +341,6 @@ const cargarPedidos = async (riderId = rider?.id) => {
   const nivel = estadisticas ? calcularNivelRider(estadisticas.totalPedidos) : { nivel: 'Novato', color: 'blue' }
   const guacaBloqueada = parseFloat(rider?.saldo_efectivo || 0) >= config.limite_guaca
 
-  // ============================================
-  // RENDER
-  // ============================================
   
   if (loading && !rider) {
     return (
@@ -478,7 +436,6 @@ const cargarPedidos = async (riderId = rider?.id) => {
           </p>
         </div>
       </div>
-
 
       <div className="px-4 mt-6">
         {pedidoActivo ? (
