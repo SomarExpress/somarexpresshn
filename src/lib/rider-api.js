@@ -1,18 +1,39 @@
 import { supabase } from './supabase'
 
-// ============================================
-// FUNCIONES PARA EL RIDER
-// ============================================
 
 // Obtener perfil del rider
-export const obtenerPerfilRider = async (riderId) => {
+export const obtenerPerfilRider = async (userId) => {
   const { data, error } = await supabase
     .from('riders')
     .select('*')
-    .eq('id', riderId)
-    .single()
+    .eq('user_id', userId)
+    .maybeSingle() // ← CAMBIO: usar maybeSingle() en vez de single()
   
   if (error) throw error
+  
+  // Si no existe el rider, crear uno básico
+  if (!data) {
+    const { data: user } = await supabase.auth.getUser()
+    const nuevoRider = {
+      user_id: userId,
+      nombre_completo: user.user.email.split('@')[0],
+      email: user.user.email,
+      telefono: '',
+      saldo_efectivo: 0,
+      activo: true,
+      verificado: false
+    }
+    
+    const { data: riderCreado, error: errorCrear } = await supabase
+      .from('riders')
+      .insert(nuevoRider)
+      .select()
+      .single()
+    
+    if (errorCrear) throw errorCrear
+    return riderCreado
+  }
+  
   return data
 }
 
@@ -30,7 +51,7 @@ export const obtenerPedidosDisponibles = async () => {
     .order('created_at', { ascending: false })
   
   if (error) throw error
-  return data
+  return data || []
 }
 
 // Obtener pedidos asignados al rider
@@ -39,16 +60,14 @@ export const obtenerPedidosAsignados = async (riderId) => {
     .from('pedidos')
     .select(`
       *,
-      comercio:comercios(nombre, direccion, latitud, longitud, telefono),
-      cliente:clientes(nombre_completo, telefono),
-      direccion:direcciones_cliente(direccion, latitud, longitud, referencia)
+      comercio:comercios(nombre, direccion, latitud, longitud, telefono)
     `)
     .eq('rider_id', riderId)
     .in('estado', ['asignado', 'en_camino', 'en_comercio', 'recogido'])
     .order('created_at', { ascending: true })
   
   if (error) throw error
-  return data
+  return data || []
 }
 
 // Aceptar pedido
@@ -143,9 +162,19 @@ export const obtenerConfiguracion = async () => {
   const { data, error } = await supabase
     .from('configuracion_global')
     .select('*')
-    .single()
+    .maybeSingle() // ← CAMBIO: usar maybeSingle()
   
   if (error) throw error
+  
+  // Si no existe configuración, retornar valores por defecto
+  if (!data) {
+    return {
+      porcentaje_rider: 66.66,
+      porcentaje_somar: 33.34,
+      limite_guaca: 300
+    }
+  }
+  
   return data
 }
 
@@ -184,59 +213,7 @@ export const suscribirPedidosRider = (riderId, callback) => {
   return channel
 }
 
-// Enviar mensaje en chat
-export const enviarMensaje = async (pedidoId, riderId, mensaje, tipo = 'texto', archivoUrl = null) => {
-  const { data, error } = await supabase
-    .from('mensajes')
-    .insert({
-      pedido_id: pedidoId,
-      remitente_id: riderId,
-      remitente_tipo: 'rider',
-      mensaje,
-      tipo,
-      archivo_url: archivoUrl
-    })
-    .select()
-    .single()
-  
-  if (error) throw error
-  return data
-}
-
-// Obtener mensajes del pedido
-export const obtenerMensajesPedido = async (pedidoId) => {
-  const { data, error } = await supabase
-    .from('mensajes')
-    .select('*')
-    .eq('pedido_id', pedidoId)
-    .order('created_at', { ascending: true })
-  
-  if (error) throw error
-  return data
-}
-
-// Suscribirse a mensajes del pedido
-export const suscribirMensajes = (pedidoId, callback) => {
-  const channel = supabase
-    .channel(`mensajes-${pedidoId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'mensajes',
-        filter: `pedido_id=eq.${pedidoId}`
-      },
-      (payload) => {
-        callback(payload.new)
-      }
-    )
-    .subscribe()
-  
-  return channel
-}
-
-// Calcular estadísticas del rider
+// Obtener estadísticas del rider
 export const obtenerEstadisticasRider = async (riderId) => {
   const { data, error } = await supabase
     .from('pedidos')
@@ -246,14 +223,16 @@ export const obtenerEstadisticasRider = async (riderId) => {
   
   if (error) throw error
   
-  const totalGanancia = data.reduce((sum, p) => sum + (parseFloat(p.ganancia_rider) || 0), 0)
-  const totalPropinas = data.reduce((sum, p) => sum + (parseFloat(p.propina) || 0), 0)
-  const totalPedidos = data.length
+  const pedidos = data || []
+  
+  const totalGanancia = pedidos.reduce((sum, p) => sum + (parseFloat(p.ganancia_rider) || 0), 0)
+  const totalPropinas = pedidos.reduce((sum, p) => sum + (parseFloat(p.propina) || 0), 0)
+  const totalPedidos = pedidos.length
   
   // Pedidos de hoy
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
-  const pedidosHoy = data.filter(p => new Date(p.created_at) >= hoy).length
+  const pedidosHoy = pedidos.filter(p => new Date(p.created_at) >= hoy).length
   
   return {
     totalGanancia: totalGanancia + totalPropinas,
