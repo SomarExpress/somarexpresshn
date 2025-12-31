@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import DashboardDespacho from './components/DashboardDespacho'
-import RiderApp from './components/RiderApp'
+import RiderWrapper from './components/RiderWrapper'
 import { TruckIcon, Home } from 'lucide-react'
 
 function App() {
@@ -35,7 +35,7 @@ function App() {
       </div>
       
       {/* Renderizar vista seleccionada */}
-      {vista === 'despacho' ? <DashboardDespacho /> : <RiderApp />}
+      {vista === 'despacho' ? <DashboardDespacho /> : <RiderWrapper />}
     </div>
   )
 }
