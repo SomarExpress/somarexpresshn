@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from 'react-leaflet'
+import 'leaflet/dist/leaflet.css'
+import L from 'leaflet'
 import {
-  TruckIcon, MapPin, DollarSign, Package, CheckCircle, Clock,
-  Navigation, Phone, Camera, MessageCircle, AlertCircle, Star,
-  Zap, Award, TrendingUp, LogOut, Menu, X, ArrowRight, Upload,
-  ExternalLink, Shield, Wallet
+  Package, MapPin, TruckIcon, CheckCircle, Camera, Clock, DollarSign,
+  Navigation, Phone, MessageSquare, AlertCircle, Menu, X, Wallet
 } from 'lucide-react'
 import {
   obtenerPerfilRider, obtenerPedidosDisponibles, obtenerPedidosAsignados,
@@ -11,120 +12,319 @@ import {
   suscribirPedidosRider, actualizarEfectivoRider, obtenerEstadisticasRider,
   calcularNivelRider, calcularDistanciaPedido
 } from '../lib/rider-api'
-import { supabase } from '../lib/supabase'
 
-const RiderApp = () => {
-  // Estados principales
+// Configurar íconos de Leaflet
+delete L.Icon.Default.prototype._getIconUrl
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png'
+})
+
+// Íconos personalizados
+const createCustomIcon = (color) => new L.Icon({
+  iconUrl: `data:image/svg+xml;base64,${btoa(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color}" width="32" height="32">
+      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+    </svg>
+  `)}`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+  popupAnchor: [0, -32]
+})
+
+const riderIcon = createCustomIcon('#3b82f6')
+const comercioIcon = createCustomIcon('#10b981')
+const clienteIcon = createCustomIcon('#f59e0b')
+
+// Componente para centrar el mapa
+const MapController = ({ center, zoom }) => {
+  const map = useMap()
+  useEffect(() => {
+    if (center) {
+      map.setView(center, zoom || 15)
+    }
+  }, [center, zoom, map])
+  return null
+}
+
+export default function RiderApp() {
+  // Estados existentes
   const [rider, setRider] = useState(null)
-  const [config, setConfig] = useState({ porcentaje_rider: 66.66, limite_guaca: 300 })
   const [pedidosDisponibles, setPedidosDisponibles] = useState([])
   const [pedidoActivo, setPedidoActivo] = useState(null)
+  const [config, setConfig] = useState(null)
   const [estadisticas, setEstadisticas] = useState(null)
-  
-  // UI States
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(null)
-  const [mostrarMenu, setMostrarMenu] = useState(false)
   const [modoOscuro, setModoOscuro] = useState(true)
-  const [swipeOffset, setSwipeOffset] = useState(0)
   const [facturaInput, setFacturaInput] = useState('')
   const [archivoComprobante, setArchivoComprobante] = useState(null)
+  const [menuAbierto, setMenuAbierto] = useState(false)
   
-  const swipeRef = useRef(null)
+  // Nuevos estados para el mapa y rutas
+  const [ubicacionRider, setUbicacionRider] = useState(null)
+  const [rutaActual, setRutaActual] = useState(null)
+  const [infoRuta, setInfoRuta] = useState(null) // { distancia, duracion }
+  const [vistaActual, setVistaActual] = useState('mapa') // 'mapa' o 'lista'
+  const [pedidosEnMapa, setPedidosEnMapa] = useState([])
+  const [cargandoRuta, setCargandoRuta] = useState(false)
+  
+  // Swipe
+  const [swipeOffset, setSwipeOffset] = useState(0)
   const isDragging = useRef(false)
   const startX = useRef(0)
+  const swipeRef = useRef(null)
 
-  // Auth: Obtener rider actual
-  useEffect(() => {
-    cargarDatosIniciales()
-  }, [])
+  // ============================================
+  // INICIALIZACIÓN
+  // ============================================
 
-  // Suscripción en tiempo real
   useEffect(() => {
-    if (!rider) return
-    
-    const channel = suscribirPedidosRider(rider.user_id, (payload) => {
-      cargarPedidos()
-    })
+    inicializarApp()
+    obtenerUbicacionRider()
+    const watchId = navigator.geolocation?.watchPosition(
+      (pos) => {
+        setUbicacionRider({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        })
+      },
+      (error) => console.error('Error tracking location:', error),
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    )
     
     return () => {
-      supabase.removeChannel(channel)
+      if (watchId) navigator.geolocation.clearWatch(watchId)
     }
-  }, [rider])
+  }, [])
 
-  const cargarDatosIniciales = async () => {
+  const inicializarApp = async () => {
     try {
-      setLoading(true)
-      setError(null)
-      
-      // Obtener usuario autenticado
-      const { data: { user }, error: authError } = await supabase.auth.getUser()
-      if (authError) throw authError
-      if (!user) throw new Error('No autenticado')
-      
-      console.log('👤 Usuario autenticado:', user.email, user.id)
-      
-      // Obtener perfil del rider
-      const perfilRider = await obtenerPerfilRider(user.id)
-      if (!perfilRider) {
-        throw new Error('No se encontró el perfil del rider. Por favor contacta al administrador.')
-      }
-      
-      console.log('✅ Perfil del rider cargado:', perfilRider)
-      setRider(perfilRider)
-      
-      // Obtener configuración
-      const configData = await obtenerConfiguracion()
-      console.log('⚙️ Configuración cargada:', configData)
+      const [perfilData, configData, statsData] = await Promise.all([
+        obtenerPerfilRider(),
+        obtenerConfiguracion(),
+        obtenerEstadisticasRider()
+      ])
+      setRider(perfilData)
       setConfig(configData)
+      setEstadisticas(statsData)
       
-      // Obtener estadísticas
-      const stats = await obtenerEstadisticasRider(perfilRider.user_id)
-      console.log('📊 Estadísticas cargadas:', stats)
-      setEstadisticas(stats)
+      await cargarPedidos()
       
-      // Cargar pedidos
-      await cargarPedidos(perfilRider.user_id)
+      // Suscribirse a cambios en tiempo real
+      const unsub = suscribirPedidosRider((payload) => {
+        console.log('🔔 Cambio en tiempo real:', payload)
+        cargarPedidos()
+      })
       
-    } catch (err) {
-      console.error('❌ Error en cargarDatosIniciales:', err)
-      setError(err.message || 'Error al cargar datos iniciales')
-    } finally {
-      setLoading(false)
+      return () => unsub?.()
+    } catch (error) {
+      console.error('Error inicializando:', error)
     }
   }
 
-  const cargarPedidos = async (riderId = rider?.user_id) => {
+  const obtenerUbicacionRider = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setUbicacionRider({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude
+          })
+        },
+        (error) => console.error('Error obteniendo ubicación:', error),
+        { enableHighAccuracy: true }
+      )
+    }
+  }
+
+  const cargarPedidos = async () => {
     try {
-      // Validar que tenemos un riderId
-      if (!riderId) {
-        console.warn('⚠️ No hay riderId para cargar pedidos')
-        return
-      }
-      
-      console.log('📦 Cargando pedidos para rider:', riderId)
-      
       const [disponibles, asignados] = await Promise.all([
         obtenerPedidosDisponibles(),
-        obtenerPedidosAsignados(riderId)
+        obtenerPedidosAsignados()
       ])
       
-      console.log('✅ Pedidos disponibles:', disponibles?.length || 0)
-      console.log('✅ Pedidos asignados:', asignados?.length || 0)
-      
       setPedidosDisponibles(disponibles || [])
-      setPedidoActivo(asignados?.[0] || null)
+      setPedidosEnMapa(disponibles || [])
       
-    } catch (err) {
-      console.error('❌ Error cargando pedidos:', err)
-      setPedidosDisponibles([])
-      setPedidoActivo(null)
+      if (asignados && asignados.length > 0) {
+        setPedidoActivo(asignados[0])
+        if (asignados[0] && ubicacionRider) {
+          await calcularRuta(asignados[0])
+        }
+      } else {
+        setPedidoActivo(null)
+        setRutaActual(null)
+        setInfoRuta(null)
+      }
+    } catch (error) {
+      console.error('Error cargando pedidos:', error)
     }
   }
-  
+
+  // ============================================
+  // CÁLCULO DE RUTAS CON OPENROUTESERVICE (GRATIS)
+  // ============================================
+
+  const calcularRuta = async (pedido) => {
+    if (!ubicacionRider || !pedido) return
+
+    setCargandoRuta(true)
+    try {
+      // Determinar origen y destino según el estado
+      let origen, destino
+      
+      if (pedido.estado === 'asignado' || pedido.estado === 'en_comercio') {
+        // Ruta: Rider → Comercio
+        origen = [ubicacionRider.lng, ubicacionRider.lat]
+        destino = [pedido.comercio?.longitud, pedido.comercio?.latitud]
+      } else if (pedido.estado === 'recogido' || pedido.estado === 'en_camino' || pedido.estado === 'llegada_cliente') {
+        // Ruta: Rider → Cliente
+        origen = [ubicacionRider.lng, ubicacionRider.lat]
+        destino = [pedido.longitud_entrega, pedido.latitud_entrega]
+      }
+
+      if (!origen || !destino || destino.includes(null)) {
+        console.log('Coordenadas incompletas para calcular ruta')
+        return
+      }
+
+      // Usar OpenRouteService (API gratuita)
+      const ORS_API_KEY = '5b3ce3597851110001cf62484c8fe7dd4ee34fc0959cb088e67f53c1'
+      
+      const response = await fetch(
+        `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${ORS_API_KEY}&start=${origen[0]},${origen[1]}&end=${destino[0]},${destino[1]}`,
+        {
+          headers: {
+            'Accept': 'application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8'
+          }
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error('Error calculando ruta')
+      }
+
+      const data = await response.json()
+      
+      if (data.features && data.features[0]) {
+        const coordinates = data.features[0].geometry.coordinates
+        const properties = data.features[0].properties
+        
+        // Convertir coordenadas de [lng, lat] a [lat, lng] para Leaflet
+        const rutaLeaflet = coordinates.map(coord => [coord[1], coord[0]])
+        
+        setRutaActual(rutaLeaflet)
+        setInfoRuta({
+          distancia: (properties.segments[0].distance / 1000).toFixed(1), // km
+          duracion: Math.round(properties.segments[0].duration / 60) // minutos
+        })
+      }
+    } catch (error) {
+      console.error('Error calculando ruta:', error)
+      // Fallback: línea recta
+      calcularRutaLineal(pedido)
+    } finally {
+      setCargandoRuta(false)
+    }
+  }
+
+  const calcularRutaLineal = (pedido) => {
+    if (!ubicacionRider || !pedido) return
+
+    let destino
+    if (pedido.estado === 'asignado' || pedido.estado === 'en_comercio') {
+      destino = { lat: pedido.comercio?.latitud, lng: pedido.comercio?.longitud }
+    } else {
+      destino = { lat: pedido.latitud_entrega, lng: pedido.longitud_entrega }
+    }
+
+    if (destino.lat && destino.lng) {
+      setRutaActual([
+        [ubicacionRider.lat, ubicacionRider.lng],
+        [destino.lat, destino.lng]
+      ])
+      
+      // Calcular distancia lineal aproximada
+      const distancia = calcularDistanciaLineal(
+        ubicacionRider.lat, ubicacionRider.lng,
+        destino.lat, destino.lng
+      )
+      setInfoRuta({
+        distancia: distancia.toFixed(1),
+        duracion: Math.round(distancia * 3) // Aprox 3 min por km
+      })
+    }
+  }
+
+  const calcularDistanciaLineal = (lat1, lon1, lat2, lon2) => {
+    const R = 6371
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLon = (lon2 - lon1) * Math.PI / 180
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c
+  }
+
+  // ============================================
+  // MANEJO DE PEDIDOS
+  // ============================================
+
+  const handleAceptarPedido = async (pedido) => {
+    try {
+      await aceptarPedido(pedido.id)
+      await cargarPedidos()
+      setVistaActual('detalles')
+    } catch (error) {
+      console.error('Error aceptando pedido:', error)
+      alert('Error al aceptar el pedido')
+    }
+  }
+
+  const handleCambiarEstado = async (nuevoEstado) => {
+    try {
+      let data = { estado: nuevoEstado }
+      
+      if (nuevoEstado === 'recogido' && pedidoActivo.tipo === 'compra') {
+        if (!facturaInput || !archivoComprobante) {
+          alert('Debes ingresar el monto y subir la foto de la factura')
+          return
+        }
+        data.monto_factura = parseFloat(facturaInput)
+      }
+      
+      await actualizarEstadoPedido(pedidoActivo.id, data)
+      
+      if (nuevoEstado === 'recogido' && pedidoActivo.tipo === 'compra' && archivoComprobante) {
+        await subirComprobante(pedidoActivo.id, archivoComprobante, 'factura')
+      }
+      
+      if (nuevoEstado === 'entregado') {
+        if (pedidoActivo.metodo_pago === 'efectivo') {
+          const nuevoSaldo = parseFloat(rider.saldo_efectivo || 0) + parseFloat(pedidoActivo.monto_cobrar_rider || 0)
+          await actualizarEfectivoRider(nuevoSaldo)
+        }
+        setFacturaInput('')
+        setArchivoComprobante(null)
+      }
+      
+      await cargarPedidos()
+    } catch (error) {
+      console.error('Error cambiando estado:', error)
+      alert('Error al actualizar el estado')
+    }
+  }
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0]
+    if (file) setArchivoComprobante(file)
+  }
+
+  // Swipe handlers
   const handleTouchStart = (e, pedido) => {
-    if (pedidoActivo) return // Ya tiene un pedido activo
     isDragging.current = true
     startX.current = e.touches[0].clientX
   }
@@ -139,81 +339,22 @@ const RiderApp = () => {
   }
 
   const handleTouchEnd = async (pedido) => {
-    isDragging.current = false
-    
-    if (swipeOffset > 200) {
-      // Aceptar pedido
-      await handleAceptarPedido(pedido.id)
+    if (swipeOffset > 150) {
+      await handleAceptarPedido(pedido)
     }
-    
     setSwipeOffset(0)
+    isDragging.current = false
   }
 
-  const handleAceptarPedido = async (pedidoId) => {
-    try {
-      setLoading(true)
-      await aceptarPedido(pedidoId, rider.user_id)
-      setSuccess('✅ Pedido aceptado')
-      await cargarPedidos()
-      setTimeout(() => setSuccess(null), 2000)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-  
-  const handleCambiarEstado = async (nuevoEstado, datosExtra = {}) => {
-    try {
-      setLoading(true)
-      
-      // Si es compra y está llegando a comercio, validar factura
-      if (nuevoEstado === 'recogido' && pedidoActivo.tipo === 'compra') {
-        if (!facturaInput || !archivoComprobante) {
-          throw new Error('Debes ingresar el monto y subir la foto de la factura')
-        }
-        datosExtra.total_compra = parseFloat(facturaInput)
-      }
-      
-      // Actualizar estado
-      await actualizarEstadoPedido(pedidoActivo.id, nuevoEstado, datosExtra)
-      
-      // Si hay comprobante, subirlo
-      if (archivoComprobante && nuevoEstado === 'recogido') {
-        await subirComprobante(pedidoActivo.id, archivoComprobante)
-      }
-      
-      // Si finaliza el pedido, actualizar efectivo
-      if (nuevoEstado === 'entregado' && pedidoActivo.metodo_pago === 'efectivo') {
-        const nuevoEfectivo = parseFloat(rider.saldo_efectivo) + parseFloat(pedidoActivo.monto_cobrar_rider)
-        await actualizarEfectivoRider(rider.user_id, nuevoEfectivo)
-        setRider(prev => ({ ...prev, saldo_efectivo: nuevoEfectivo }))
-      }
-      
-      setSuccess('✅ Estado actualizado')
-      await cargarPedidos()
-      setFacturaInput('')
-      setArchivoComprobante(null)
-      setTimeout(() => setSuccess(null), 2000)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
+  // ============================================
+  // RENDERIZADO DE BOTONES SEGÚN ESTADO
+  // ============================================
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0]
-    if (file && file.type.startsWith('image/')) {
-      setArchivoComprobante(file)
-    }
-  }
-  
-  const renderBotonAccion = () => {
+  const renderBotonesEstado = () => {
     if (!pedidoActivo) return null
-    
+
     const { estado, tipo } = pedidoActivo
-    
+
     switch (estado) {
       case 'asignado':
         return (
@@ -320,404 +461,404 @@ const RiderApp = () => {
         return null
     }
   }
+
+  // ============================================
+  // RENDERIZADO DE DETALLES COMPLETOS DEL PEDIDO
+  // ============================================
+
+  const renderDetallesPedido = () => {
+    if (!pedidoActivo) return null
+
+    return (
+      <div className="space-y-4">
+        {/* Encabezado con estado */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-xl font-bold text-white">Pedido #{pedidoActivo.numero_pedido}</h3>
+            <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium mt-1 ${
+              pedidoActivo.estado === 'asignado' ? 'bg-blue-500/20 text-blue-300' :
+              pedidoActivo.estado === 'en_comercio' ? 'bg-yellow-500/20 text-yellow-300' :
+              pedidoActivo.estado === 'recogido' ? 'bg-purple-500/20 text-purple-300' :
+              pedidoActivo.estado === 'en_camino' ? 'bg-orange-500/20 text-orange-300' :
+              pedidoActivo.estado === 'llegada_cliente' ? 'bg-pink-500/20 text-pink-300' :
+              'bg-green-500/20 text-green-300'
+            }`}>
+              {pedidoActivo.estado.replace(/_/g, ' ').toUpperCase()}
+            </span>
+          </div>
+          <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+            pedidoActivo.tipo === 'compra' ? 'bg-green-500/20 text-green-300' : 'bg-blue-500/20 text-blue-300'
+          }`}>
+            {pedidoActivo.tipo === 'compra' ? '🛒 Compra' : '📦 Recolecta'}
+          </span>
+        </div>
+
+        {/* Información de ruta */}
+        {infoRuta && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-slate-800 rounded-xl p-4">
+              <p className="text-xs text-slate-400 mb-1">Distancia</p>
+              <p className="text-2xl font-bold text-white">{infoRuta.distancia} km</p>
+            </div>
+            <div className="bg-slate-800 rounded-xl p-4">
+              <p className="text-xs text-slate-400 mb-1">Tiempo est.</p>
+              <p className="text-2xl font-bold text-white">{infoRuta.duracion} min</p>
+            </div>
+          </div>
+        )}
+
+        {/* Información del comercio */}
+        <div className="bg-slate-800 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <MapPin size={20} className="text-green-400 flex-shrink-0 mt-1" />
+            <div className="flex-1">
+              <p className="text-xs text-slate-400 mb-1">Comercio</p>
+              <p className="text-white font-semibold">{pedidoActivo.comercio?.nombre || 'Sin comercio'}</p>
+              <p className="text-sm text-slate-400 mt-1">{pedidoActivo.comercio?.direccion || 'Sin dirección'}</p>
+              {pedidoActivo.comercio?.telefono && (
+                <a href={`tel:${pedidoActivo.comercio.telefono}`} className="text-blue-400 text-sm mt-2 inline-flex items-center gap-1">
+                  <Phone size={14} /> {pedidoActivo.comercio.telefono}
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Información del cliente */}
+        <div className="bg-slate-800 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <MapPin size={20} className="text-orange-400 flex-shrink-0 mt-1" />
+            <div className="flex-1">
+              <p className="text-xs text-slate-400 mb-1">Cliente</p>
+              <p className="text-white font-semibold">{pedidoActivo.cliente_nombre || 'Cliente'}</p>
+              <p className="text-sm text-slate-400 mt-1">{pedidoActivo.direccion_entrega}</p>
+              {pedidoActivo.cliente_telefono && (
+                <a href={`tel:${pedidoActivo.cliente_telefono}`} className="text-blue-400 text-sm mt-2 inline-flex items-center gap-1">
+                  <Phone size={14} /> {pedidoActivo.cliente_telefono}
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Detalles del pedido */}
+        {pedidoActivo.tipo === 'compra' && pedidoActivo.productos && (
+          <div className="bg-slate-800 rounded-xl p-4">
+            <p className="text-xs text-slate-400 mb-2">Productos a comprar</p>
+            <div className="space-y-2">
+              {pedidoActivo.productos.map((prod, idx) => (
+                <div key={idx} className="flex justify-between text-sm">
+                  <span className="text-white">{prod.cantidad}x {prod.nombre}</span>
+                  <span className="text-slate-400">{prod.precio ? formatearMoneda(prod.precio) : ''}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Información de pago */}
+        <div className="bg-slate-800 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs text-slate-400">Método de pago</p>
+            <span className={`px-2 py-1 rounded text-xs font-medium ${
+              pedidoActivo.metodo_pago === 'efectivo' ? 'bg-green-500/20 text-green-300' : 'bg-blue-500/20 text-blue-300'
+            }`}>
+              {pedidoActivo.metodo_pago === 'efectivo' ? '💵 Efectivo' : '💳 Transferencia'}
+            </span>
+          </div>
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">Total del pedido</span>
+              <span className="text-white font-semibold">{formatearMoneda(pedidoActivo.total || 0)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">Tu ganancia</span>
+              <span className="text-green-400 font-semibold">{formatearMoneda(pedidoActivo.ganancia_rider || 0)}</span>
+            </div>
+            {pedidoActivo.propina > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-400">Propina</span>
+                <span className="text-green-400 font-semibold">{formatearMoneda(pedidoActivo.propina)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Notas especiales */}
+        {pedidoActivo.notas && (
+          <div className="bg-yellow-900/20 border border-yellow-500/50 rounded-xl p-4">
+            <div className="flex items-start gap-2">
+              <AlertCircle size={16} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs text-yellow-300 font-medium mb-1">Nota especial</p>
+                <p className="text-sm text-white">{pedidoActivo.notas}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Botones de acción */}
+        <div className="pt-4">
+          {renderBotonesEstado()}
+        </div>
+      </div>
+    )
+  }
+
+  // ============================================
+  // UTILIDADES
+  // ============================================
   
   const formatearMoneda = (valor) => `L ${parseFloat(valor || 0).toFixed(2)}`
   
   const calcularProgresGuaca = () => {
-    const porcentaje = (parseFloat(rider?.saldo_efectivo || 0) / config.limite_guaca) * 100
+    const porcentaje = (parseFloat(rider?.saldo_efectivo || 0) / config?.limite_guaca) * 100
     return Math.min(porcentaje, 100)
   }
-  
-  const abrirNavegacion = (lat, lon, app = 'google') => {
-    const url = app === 'google' 
-      ? `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`
-      : `https://waze.com/ul?ll=${lat},${lon}&navigate=yes`
-    window.open(url, '_blank')
-  }
 
-  const nivel = estadisticas ? calcularNivelRider(estadisticas.totalPedidos) : { nivel: 'Novato', color: 'blue' }
-  const guacaBloqueada = parseFloat(rider?.saldo_efectivo || 0) >= config.limite_guaca
+  // ============================================
+  // RENDER PRINCIPAL
+  // ============================================
 
-  if (loading && !rider) {
+  if (!rider || !config) {
     return (
-      <div className={`min-h-screen ${modoOscuro ? 'bg-slate-900' : 'bg-slate-50'} flex items-center justify-center`}>
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className={`${modoOscuro ? 'text-slate-300' : 'text-slate-700'}`}>Cargando...</p>
+          <p className="text-white">Cargando...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className={`min-h-screen ${modoOscuro ? 'bg-slate-900' : 'bg-slate-50'} pb-24`}>
+    <div className={`min-h-screen ${modoOscuro ? 'bg-slate-900' : 'bg-gray-100'}`}>
       {/* Header */}
-      <header className={`${modoOscuro ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} border-b sticky top-0 z-40`}>
-        <div className="px-4 py-4 flex items-center justify-between">
+      <div className="sticky top-0 z-50 bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 shadow-lg">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-600 rounded-lg">
-              <TruckIcon className="text-white w-6 h-6" />
-            </div>
+            <button onClick={() => setMenuAbierto(!menuAbierto)} className="p-2">
+              {menuAbierto ? <X size={24} /> : <Menu size={24} />}
+            </button>
             <div>
-              <h1 className={`text-lg font-bold ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-                Hola, {rider?.nombre_completo?.split(' ')[0]}
-              </h1>
-              <p className={`text-xs ${modoOscuro ? 'text-slate-400' : 'text-slate-600'}`}>
-                Nivel {nivel.nivel}
-              </p>
+              <h1 className="font-bold text-lg">{rider.nombre_completo}</h1>
+              <p className="text-xs text-blue-100">{calcularNivelRider(estadisticas?.total_pedidos || 0).nivel}</p>
             </div>
           </div>
-          <button onClick={() => setMostrarMenu(true)} className={`p-2 rounded-lg ${modoOscuro ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
-            <Menu size={24} className={modoOscuro ? 'text-white' : 'text-slate-900'} />
-          </button>
-        </div>
-      </header>
-
-      {/* Alerta Guaca Bloqueada */}
-      {guacaBloqueada && (
-        <div className="mx-4 mt-4 bg-red-900/50 border border-red-500 rounded-xl p-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="text-red-400 flex-shrink-0" size={24} />
-            <div>
-              <p className="font-bold text-red-200">Guaca Llena - Liquidación Pendiente</p>
-              <p className="text-sm text-red-300 mt-1">
-                Has alcanzado el límite de {formatearMoneda(config.limite_guaca)}. Liquida tu efectivo para seguir recibiendo pedidos.
-              </p>
+          <div className="text-right">
+            <div className="flex items-center gap-2 bg-white/20 rounded-lg px-3 py-1">
+              <Wallet size={18} />
+              <span className="font-bold">{formatearMoneda(rider.saldo_efectivo)}</span>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Barra de Progreso Guaca */}
-      <div className="px-4 mt-4">
-        <div className={`${modoOscuro ? 'bg-slate-800' : 'bg-white'} rounded-xl p-4 shadow-lg`}>
-          <div className="flex items-center justify-between mb-2">
-            <span className={`text-sm font-medium ${modoOscuro ? 'text-slate-300' : 'text-slate-700'}`}>
-              💰 La Guaca
-            </span>
-            <span className={`text-sm font-bold ${modoOscuro ? 'text-blue-400' : 'text-blue-600'}`}>
-              {formatearMoneda(rider?.saldo_efectivo || 0)} / {formatearMoneda(config.limite_guaca)}
-            </span>
-          </div>
-          <div className="w-full bg-slate-700 rounded-full h-3 overflow-hidden">
-            <div 
-              className={`h-full transition-all duration-500 ${calcularProgresGuaca() >= 90 ? 'bg-red-500' : calcularProgresGuaca() >= 70 ? 'bg-yellow-500' : 'bg-green-500'}`}
-              style={{ width: `${calcularProgresGuaca()}%` }}
-            ></div>
           </div>
         </div>
       </div>
 
-      {/* Estadísticas Rápidas */}
-      <div className="px-4 mt-4 grid grid-cols-3 gap-3">
-        <div className={`${modoOscuro ? 'bg-slate-800' : 'bg-white'} rounded-xl p-3 shadow-lg text-center`}>
-          <Wallet className={`mx-auto mb-1 ${modoOscuro ? 'text-green-400' : 'text-green-600'}`} size={20} />
-          <p className={`text-xs ${modoOscuro ? 'text-slate-400' : 'text-slate-600'}`}>Balance</p>
-          <p className={`text-sm font-bold ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-            {formatearMoneda(estadisticas?.totalGanancia || 0)}
-          </p>
-        </div>
-        <div className={`${modoOscuro ? 'bg-slate-800' : 'bg-white'} rounded-xl p-3 shadow-lg text-center`}>
-          <Package className={`mx-auto mb-1 ${modoOscuro ? 'text-blue-400' : 'text-blue-600'}`} size={20} />
-          <p className={`text-xs ${modoOscuro ? 'text-slate-400' : 'text-slate-600'}`}>Entregas</p>
-          <p className={`text-sm font-bold ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-            {estadisticas?.totalPedidos || 0}
-          </p>
-        </div>
-        <div className={`${modoOscuro ? 'bg-slate-800' : 'bg-white'} rounded-xl p-3 shadow-lg text-center`}>
-          <Zap className={`mx-auto mb-1 ${modoOscuro ? 'text-yellow-400' : 'text-yellow-600'}`} size={20} />
-          <p className={`text-xs ${modoOscuro ? 'text-slate-400' : 'text-slate-600'}`}>Hoy</p>
-          <p className={`text-sm font-bold ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-            {estadisticas?.pedidosHoy || 0}
-          </p>
-        </div>
-      </div>
-      <div className="px-4 mt-6">
-        {pedidoActivo ? (
-          /* Pedido Activo */
-          <div className={`${modoOscuro ? 'bg-slate-800' : 'bg-white'} rounded-xl p-6 shadow-2xl`}>
-            {/* Header del Pedido */}
-            <div className="flex items-center justify-between mb-4">
-              <h2 className={`text-xl font-bold ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-                {pedidoActivo.numero_pedido}
-              </h2>
-              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                pedidoActivo.estado === 'asignado' ? 'bg-blue-500/20 text-blue-300' :
-                pedidoActivo.estado === 'en_comercio' ? 'bg-yellow-500/20 text-yellow-300' :
-                pedidoActivo.estado === 'recogido' ? 'bg-green-500/20 text-green-300' :
-                pedidoActivo.estado === 'en_camino' ? 'bg-purple-500/20 text-purple-300' :
-                'bg-orange-500/20 text-orange-300'
-              }`}>
-                {pedidoActivo.estado.toUpperCase().replace('_', ' ')}
-              </span>
-            </div>
-
-            {/* Tipo de Pedido */}
-            <div className={`mb-4 p-3 rounded-lg ${pedidoActivo.tipo === 'compra' ? 'bg-green-900/30' : 'bg-blue-900/30'}`}>
-              <p className={`text-sm font-medium ${modoOscuro ? 'text-slate-300' : 'text-slate-700'}`}>
-                {pedidoActivo.tipo === 'compra' ? '🛒 Compra + Entrega' : '📦 Solo Recolecta'}
-              </p>
-            </div>
-
-            {/* Ganancia */}
-            <div className="mb-6 p-4 bg-gradient-to-r from-green-500/20 to-emerald-500/20 rounded-xl border border-green-500/30">
-              <p className="text-sm text-slate-300 mb-1">Tu Ganancia</p>
-              <p className="text-3xl font-bold text-green-400">
-                {formatearMoneda(pedidoActivo.ganancia_rider)}
-              </p>
-              {pedidoActivo.propina > 0 && (
-                <p className="text-xs text-green-300 mt-1">+ {formatearMoneda(pedidoActivo.propina)} propina</p>
-              )}
-            </div>
-
-            {/* Detalles del Comercio */}
-            {pedidoActivo.comercio && (
-              <div className={`mb-4 p-4 ${modoOscuro ? 'bg-slate-700' : 'bg-slate-100'} rounded-lg`}>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <p className="text-xs text-slate-400 mb-1">Comercio</p>
-                    <p className={`font-medium ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-                      {pedidoActivo.comercio.nombre}
-                    </p>
-                    <p className="text-sm text-slate-400 mt-1">{pedidoActivo.comercio.direccion}</p>
-                    {pedidoActivo.tipo === 'recolecta' && pedidoActivo.referencia_comercio && (
-                      <div className="mt-2 p-2 bg-yellow-500/20 rounded border border-yellow-500/30">
-                        <p className="text-xs text-yellow-300">Orden: {pedidoActivo.referencia_comercio}</p>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-2 ml-3">
-                    <button
-                      onClick={() => abrirNavegacion(pedidoActivo.comercio.latitud, pedidoActivo.comercio.longitud, 'google')}
-                      className="p-2 bg-blue-600 hover:bg-blue-700 rounded-lg"
-                    >
-                      <Navigation size={18} className="text-white" />
-                    </button>
-                    {pedidoActivo.comercio.telefono && (
-                      <a href={`tel:${pedidoActivo.comercio.telefono}`} className="p-2 bg-green-600 hover:bg-green-700 rounded-lg">
-                        <Phone size={18} className="text-white" />
-                      </a>
-                    )}
-                  </div>
-                </div>
+      {/* VISTA PRINCIPAL: MAPA O DETALLES */}
+      {pedidoActivo ? (
+        // Vista con pedido activo
+        <div className="h-screen flex flex-col">
+          {/* Mapa */}
+          <div className="flex-1 relative">
+            {ubicacionRider && (
+              <MapContainer
+                center={[ubicacionRider.lat, ubicacionRider.lng]}
+                zoom={15}
+                style={{ height: '100%', width: '100%' }}
+                zoomControl={false}
+              >
+                <TileLayer
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  attribution='&copy; OpenStreetMap contributors'
+                />
+                
+                <MapController center={[ubicacionRider.lat, ubicacionRider.lng]} zoom={14} />
+                
+                {/* Marcador del rider */}
+                <Marker position={[ubicacionRider.lat, ubicacionRider.lng]} icon={riderIcon}>
+                  <Popup>📍 Tu ubicación</Popup>
+                </Marker>
+                
+                {/* Marcador del comercio */}
+                {pedidoActivo.comercio?.latitud && pedidoActivo.comercio?.longitud && (
+                  <Marker 
+                    position={[pedidoActivo.comercio.latitud, pedidoActivo.comercio.longitud]} 
+                    icon={comercioIcon}
+                  >
+                    <Popup>🏪 {pedidoActivo.comercio.nombre}</Popup>
+                  </Marker>
+                )}
+                
+                {/* Marcador del cliente */}
+                {pedidoActivo.latitud_entrega && pedidoActivo.longitud_entrega && (
+                  <Marker 
+                    position={[pedidoActivo.latitud_entrega, pedidoActivo.longitud_entrega]} 
+                    icon={clienteIcon}
+                  >
+                    <Popup>👤 Cliente</Popup>
+                  </Marker>
+                )}
+                
+                {/* Ruta */}
+                {rutaActual && (
+                  <Polyline 
+                    positions={rutaActual} 
+                    color="#3b82f6" 
+                    weight={4} 
+                    opacity={0.7}
+                  />
+                )}
+              </MapContainer>
+            )}
+            
+            {cargandoRuta && (
+              <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-white rounded-lg shadow-lg px-4 py-2">
+                <p className="text-sm text-gray-700">Calculando ruta...</p>
               </div>
             )}
-
-            {/* Detalles del Cliente */}
-            <div className={`mb-6 p-4 ${modoOscuro ? 'bg-slate-700' : 'bg-slate-100'} rounded-lg`}>
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <p className="text-xs text-slate-400 mb-1">Cliente</p>
-                  <p className={`font-medium ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-                    {pedidoActivo.cliente_nombre}
-                  </p>
-                  <p className="text-sm text-slate-400 mt-1">{pedidoActivo.direccion_entrega}</p>
-                  {pedidoActivo.referencia_entrega && (
-                    <p className="text-xs text-slate-500 mt-1">📍 {pedidoActivo.referencia_entrega}</p>
-                  )}
-                </div>
-                <div className="flex gap-2 ml-3">
-                  <button
-                    onClick={() => abrirNavegacion(pedidoActivo.latitud_entrega, pedidoActivo.longitud_entrega, 'google')}
-                    className="p-2 bg-purple-600 hover:bg-purple-700 rounded-lg"
-                  >
-                    <Navigation size={18} className="text-white" />
-                  </button>
-                  {pedidoActivo.cliente_telefono && (
-                    <a href={`tel:${pedidoActivo.cliente_telefono}`} className="p-2 bg-green-600 hover:bg-green-700 rounded-lg">
-                      <Phone size={18} className="text-white" />
-                    </a>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Botón de Acción */}
-            {renderBotonAccion()}
           </div>
-        ) : (
-          /* Ofertas de Pedidos Disponibles */
-          <div className="space-y-4">
-            <h2 className={`text-xl font-bold ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-              Pedidos Disponibles
+          
+          {/* Panel de detalles deslizable */}
+          <div className="bg-slate-900 rounded-t-3xl shadow-2xl p-6 max-h-[50vh] overflow-y-auto">
+            {renderDetallesPedido()}
+          </div>
+        </div>
+      ) : (
+        // Vista sin pedido activo - Mapa con pedidos disponibles
+        <div className="h-screen flex flex-col">
+          <div className="flex-1 relative">
+            {ubicacionRider && (
+              <MapContainer
+                center={[ubicacionRider.lat, ubicacionRider.lng]}
+                zoom={13}
+                style={{ height: '100%', width: '100%' }}
+                zoomControl={false}
+              >
+                <TileLayer
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  attribution='&copy; OpenStreetMap contributors'
+                />
+                
+                <MapController center={[ubicacionRider.lat, ubicacionRider.lng]} zoom={13} />
+                
+                {/* Marcador del rider */}
+                <Marker position={[ubicacionRider.lat, ubicacionRider.lng]} icon={riderIcon}>
+                  <Popup>📍 Tu ubicación</Popup>
+                </Marker>
+                
+                {/* Marcadores de pedidos disponibles */}
+                {pedidosEnMapa.map(pedido => {
+                  if (pedido.comercio?.latitud && pedido.comercio?.longitud) {
+                    return (
+                      <Marker 
+                        key={pedido.id}
+                        position={[pedido.comercio.latitud, pedido.comercio.longitud]} 
+                        icon={comercioIcon}
+                      >
+                        <Popup>
+                          <div className="text-sm">
+                            <p className="font-bold">{pedido.comercio.nombre}</p>
+                            <p className="text-green-600 font-semibold">{formatearMoneda(pedido.ganancia_rider)}</p>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    )
+                  }
+                  return null
+                })}
+                
+                {/* Círculos de calor (zonas con más pedidos) */}
+                {pedidosEnMapa.length > 3 && (
+                  <Circle
+                    center={[ubicacionRider.lat, ubicacionRider.lng]}
+                    radius={2000}
+                    pathOptions={{ color: 'blue', fillColor: 'blue', fillOpacity: 0.1 }}
+                  />
+                )}
+              </MapContainer>
+            )}
+          </div>
+          
+          {/* Panel de pedidos disponibles */}
+          <div className="bg-slate-900 rounded-t-3xl shadow-2xl p-6 max-h-[45vh] overflow-y-auto">
+            <h2 className="text-xl font-bold text-white mb-4">
+              Pedidos Disponibles ({pedidosDisponibles.length})
             </h2>
             
-            {guacaBloqueada ? (
-              <div className={`${modoOscuro ? 'bg-slate-800' : 'bg-white'} rounded-xl p-6 text-center`}>
-                <Shield size={48} className="mx-auto mb-3 text-slate-500" />
-                <p className={`${modoOscuro ? 'text-slate-400' : 'text-slate-600'}`}>
-                  Liquida tu efectivo para recibir nuevos pedidos
-                </p>
-              </div>
-            ) : pedidosDisponibles.length === 0 ? (
-              <div className={`${modoOscuro ? 'bg-slate-800' : 'bg-white'} rounded-xl p-6 text-center`}>
+            {pedidosDisponibles.length === 0 ? (
+              <div className="bg-slate-800 rounded-xl p-6 text-center">
                 <Package size={48} className="mx-auto mb-3 text-slate-500" />
-                <p className={`${modoOscuro ? 'text-slate-400' : 'text-slate-600'}`}>
-                  No hay pedidos disponibles por el momento
-                </p>
+                <p className="text-slate-400">No hay pedidos disponibles</p>
               </div>
             ) : (
-              pedidosDisponibles.map(pedido => {
-                const gananciaTotal = parseFloat(pedido.ganancia_rider || 0) + parseFloat(pedido.propina || 0)
-                const distancia = calcularDistanciaPedido(pedido)
-                
-                return (
-                  <div
-                    key={pedido.id}
-                    className={`${modoOscuro ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-lg overflow-hidden relative`}
-                    ref={swipeRef}
-                    onTouchStart={(e) => handleTouchStart(e, pedido)}
-                    onTouchMove={handleTouchMove}
-                    onTouchEnd={() => handleTouchEnd(pedido)}
-                    style={{ transform: `translateX(${swipeOffset}px)`, transition: isDragging.current ? 'none' : 'transform 0.3s' }}
-                  >
-                    {/* Indicador de Swipe */}
-                    {swipeOffset > 0 && (
-                      <div 
-                        className="absolute inset-0 bg-green-500 flex items-center justify-center"
-                        style={{ opacity: swipeOffset / 250 }}
-                      >
-                        <CheckCircle size={48} className="text-white" />
-                      </div>
-                    )}
-                    
-                    <div className="p-6 relative z-10">
-                      {/* Header */}
-                      <div className="flex items-center justify-between mb-4">
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          pedido.tipo === 'compra' ? 'bg-green-500/20 text-green-300' : 'bg-blue-500/20 text-blue-300'
-                        }`}>
-                          {pedido.tipo === 'compra' ? '🛒 Compra' : '📦 Recolecta'}
-                        </span>
-                        <span className={`text-xs ${modoOscuro ? 'text-slate-400' : 'text-slate-600'}`}>
-                          {distancia ? `${distancia.toFixed(1)} km` : 'Sin calcular'}
-                        </span>
-                      </div>
+              <div className="space-y-3">
+                {pedidosDisponibles.map(pedido => {
+                  const gananciaTotal = parseFloat(pedido.ganancia_rider || 0) + parseFloat(pedido.propina || 0)
+                  const distancia = calcularDistanciaPedido(pedido)
+                  
+                  return (
+                    <div
+                      key={pedido.id}
+                      className="bg-slate-800 rounded-xl shadow-lg overflow-hidden relative"
+                      ref={swipeRef}
+                      onTouchStart={(e) => handleTouchStart(e, pedido)}
+                      onTouchMove={handleTouchMove}
+                      onTouchEnd={() => handleTouchEnd(pedido)}
+                      style={{ transform: `translateX(${swipeOffset}px)`, transition: isDragging.current ? 'none' : 'transform 0.3s' }}
+                    >
+                      {swipeOffset > 0 && (
+                        <div 
+                          className="absolute inset-0 bg-green-500 flex items-center justify-center"
+                          style={{ opacity: swipeOffset / 250 }}
+                        >
+                          <CheckCircle size={48} className="text-white" />
+                        </div>
+                      )}
+                      
+                      <div className="p-4 relative z-10">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                            pedido.tipo === 'compra' ? 'bg-green-500/20 text-green-300' : 'bg-blue-500/20 text-blue-300'
+                          }`}>
+                            {pedido.tipo === 'compra' ? '🛒 Compra' : '📦 Recolecta'}
+                          </span>
+                          <span className="text-xs text-slate-400">
+                            {distancia ? `${distancia.toFixed(1)} km` : 'Sin calcular'}
+                          </span>
+                        </div>
 
-                      {/* Ganancia Destacada */}
-                      <div className="mb-4">
-                        <p className="text-sm text-slate-400 mb-1">Ganarás</p>
-                        <p className="text-3xl font-bold text-green-400">
-                          {formatearMoneda(gananciaTotal)}
-                        </p>
-                      </div>
+                        <div className="mb-3">
+                          <p className="text-sm text-slate-400 mb-1">Ganarás</p>
+                          <p className="text-2xl font-bold text-green-400">{formatearMoneda(gananciaTotal)}</p>
+                        </div>
 
-                      {/* Origen y Destino */}
-                      <div className="space-y-2 mb-4">
-                        <div className="flex items-start gap-2">
-                          <MapPin size={16} className="text-blue-400 flex-shrink-0 mt-0.5" />
-                          <div>
-                            <p className="text-xs text-slate-400">Comercio</p>
-                            <p className={`text-sm ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-                              {pedido.comercio?.nombre || 'Sin comercio'}
-                            </p>
+                        <div className="space-y-2">
+                          <div className="flex items-start gap-2">
+                            <MapPin size={14} className="text-green-400 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1">
+                              <p className="text-xs text-slate-400">Comercio</p>
+                              <p className="text-sm text-white">{pedido.comercio?.nombre || 'Sin comercio'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <MapPin size={14} className="text-orange-400 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1">
+                              <p className="text-xs text-slate-400">Cliente</p>
+                              <p className="text-sm text-white">{pedido.direccion_entrega?.substring(0, 40)}...</p>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-start gap-2">
-                          <MapPin size={16} className="text-purple-400 flex-shrink-0 mt-0.5" />
-                          <div>
-                            <p className="text-xs text-slate-400">Cliente</p>
-                            <p className={`text-sm ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>
-                              {pedido.direccion_entrega?.substring(0, 40)}...
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Instrucción de Swipe */}
-                      <div className="flex items-center justify-center gap-2 text-slate-400 text-sm">
-                        <ArrowRight size={16} />
-                        <span>Desliza para aceptar</span>
+                        
+                        <p className="text-center text-xs text-slate-500 mt-3">👉 Desliza para aceptar</p>
                       </div>
                     </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Menu Lateral */}
-      {mostrarMenu && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1" onClick={() => setMostrarMenu(false)}></div>
-          <div className={`w-80 ${modoOscuro ? 'bg-slate-800' : 'bg-white'} shadow-2xl p-6 overflow-y-auto`}>
-            <div className="flex items-center justify-between mb-6">
-              <h2 className={`text-xl font-bold ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>Menú</h2>
-              <button onClick={() => setMostrarMenu(false)} className="p-2 hover:bg-slate-700 rounded-lg">
-                <X size={24} className={modoOscuro ? 'text-white' : 'text-slate-900'} />
-              </button>
-            </div>
-
-            {/* Perfil */}
-            <div className={`mb-6 p-4 ${modoOscuro ? 'bg-slate-700' : 'bg-slate-100'} rounded-xl`}>
-              <p className={`font-bold ${modoOscuro ? 'text-white' : 'text-slate-900'}`}>{rider?.nombre_completo}</p>
-              <p className="text-sm text-slate-400">{rider?.telefono}</p>
-              <div className="mt-3 flex items-center gap-2">
-                <Award className={`text-${nivel.color}-400`} size={20} />
-                <span className={`text-sm font-medium text-${nivel.color}-400`}>{nivel.nivel}</span>
+                  )
+                })}
               </div>
-            </div>
-
-            {/* Opciones */}
-            <div className="space-y-2">
-              <button className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${modoOscuro ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
-                <TrendingUp size={20} className={modoOscuro ? 'text-slate-400' : 'text-slate-600'} />
-                <span className={modoOscuro ? 'text-white' : 'text-slate-900'}>Mis Estadísticas</span>
-              </button>
-              <button className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${modoOscuro ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
-                <Wallet size={20} className={modoOscuro ? 'text-slate-400' : 'text-slate-600'} />
-                <span className={modoOscuro ? 'text-white' : 'text-slate-900'}>Mi Billetera</span>
-              </button>
-              <button 
-                onClick={() => setModoOscuro(!modoOscuro)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${modoOscuro ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
-              >
-                <span className={modoOscuro ? 'text-white' : 'text-slate-900'}>
-                  {modoOscuro ? '☀️ Modo Claro' : '🌙 Modo Oscuro'}
-                </span>
-              </button>
-              <button 
-                onClick={() => supabase.auth.signOut()}
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-red-900/20 text-red-400"
-              >
-                <LogOut size={20} />
-                <span>Cerrar Sesión</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Alertas */}
-      {error && (
-        <div className="fixed bottom-24 left-4 right-4 bg-red-900/90 border border-red-500 rounded-xl p-4 shadow-2xl z-50">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="text-red-400 flex-shrink-0" size={20} />
-            <div className="flex-1">
-              <p className="font-medium text-red-200">{error}</p>
-            </div>
-            <button onClick={() => setError(null)} className="text-red-400">
-              <X size={20} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {success && (
-        <div className="fixed bottom-24 left-4 right-4 bg-green-900/90 border border-green-500 rounded-xl p-4 shadow-2xl z-50">
-          <div className="flex items-start gap-3">
-            <CheckCircle className="text-green-400 flex-shrink-0" size={20} />
-            <p className="flex-1 font-medium text-green-200">{success}</p>
-            <button onClick={() => setSuccess(null)} className="text-green-400">
-              <X size={20} />
-            </button>
+            )}
           </div>
         </div>
       )}
     </div>
   )
 }
-
-export default RiderApp
