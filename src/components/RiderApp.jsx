@@ -65,35 +65,64 @@ const cargarDatosIniciales = async () => {
       
       console.log('👤 Usuario autenticado:', user.email, user.id)
       
-      // Obtener perfil del rider
-      const perfilRider = await obtenerPerfilRider(user.id)
-      if (!perfilRider) {
-        throw new Error('No se encontró el perfil del rider. Por favor contacta al administrador.')
+// Obtener perfil del rider
+export const obtenerPerfilRider = async (userId) => {
+  try {
+    console.log('🔍 Buscando rider con user_id:', userId)
+    
+    const { data, error } = await supabase
+      .from('riders')
+      .select('id, user_id, nombre_completo, email, telefono, saldo_efectivo, activo, verificado')
+      .eq('user_id', userId)
+      .limit(1)
+    
+    if (error) {
+      console.error('❌ Error en query de rider:', error)
+      throw error
+    }
+    
+    console.log('📊 Resultado de query riders:', data)
+    
+    // Si no existe el rider, crear uno básico
+    if (!data || data.length === 0) {
+      console.log('⚠️ No existe rider, creando uno nuevo...')
+      
+      const { data: user } = await supabase.auth.getUser()
+      const nuevoRider = {
+        user_id: userId,
+        nombre_completo: user.user.email?.split('@')[0] || 'Rider',
+        email: user.user.email,
+        telefono: '',
+        saldo_efectivo: 0,
+        activo: true,
+        verificado: false
       }
       
-      console.log('✅ Perfil del rider cargado:', perfilRider)
-      setRider(perfilRider)
+      const { data: riderCreado, error: errorCrear } = await supabase
+        .from('riders')
+        .insert(nuevoRider)
+        .select('id, user_id, nombre_completo, email, telefono, saldo_efectivo, activo, verificado')
       
-      // Obtener configuración
-      const configData = await obtenerConfiguracion()
-      console.log('⚙️ Configuración cargada:', configData)
-      setConfig(configData)
+      if (errorCrear) {
+        console.error('❌ Error creando rider:', errorCrear)
+        throw errorCrear
+      }
       
-      // Obtener estadísticas
-      const stats = await obtenerEstadisticasRider(perfilRider.id)
-      console.log('📊 Estadísticas cargadas:', stats)
-      setEstadisticas(stats)
-      
-      // Cargar pedidos
-      await cargarPedidos(perfilRider.id)
-      
-    } catch (err) {
-      console.error('❌ Error en cargarDatosIniciales:', err)
-      setError(err.message || 'Error al cargar datos iniciales')
-    } finally {
-      setLoading(false)
+      console.log('✅ Rider creado:', riderCreado[0])
+      return riderCreado[0]
     }
+    
+    const rider = data[0]
+    console.log('✅ Rider encontrado - ID:', rider.id, '(tipo:', typeof rider.id, ')')
+    console.log('✅ Rider completo:', rider)
+    
+    return rider
+    
+  } catch (error) {
+    console.error('❌ Error en obtenerPerfilRider:', error)
+    throw error
   }
+}
 
 const cargarPedidos = async (riderId = rider?.id) => {
     try {
