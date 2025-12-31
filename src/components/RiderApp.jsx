@@ -53,54 +53,76 @@ const RiderApp = () => {
     }
   }, [rider])
 
-  const cargarDatosIniciales = async () => {
+const cargarDatosIniciales = async () => {
     try {
       setLoading(true)
+      setError(null)
       
       // Obtener usuario autenticado
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError) throw authError
       if (!user) throw new Error('No autenticado')
+      
+      console.log('👤 Usuario autenticado:', user.email, user.id)
       
       // Obtener perfil del rider
       const perfilRider = await obtenerPerfilRider(user.id)
+      if (!perfilRider) {
+        throw new Error('No se encontró el perfil del rider. Por favor contacta al administrador.')
+      }
+      
+      console.log('✅ Perfil del rider cargado:', perfilRider)
       setRider(perfilRider)
       
       // Obtener configuración
       const configData = await obtenerConfiguracion()
+      console.log('⚙️ Configuración cargada:', configData)
       setConfig(configData)
       
       // Obtener estadísticas
       const stats = await obtenerEstadisticasRider(perfilRider.id)
+      console.log('📊 Estadísticas cargadas:', stats)
       setEstadisticas(stats)
       
       // Cargar pedidos
       await cargarPedidos(perfilRider.id)
+      
     } catch (err) {
-      setError(err.message)
+      console.error('❌ Error en cargarDatosIniciales:', err)
+      setError(err.message || 'Error al cargar datos iniciales')
     } finally {
       setLoading(false)
     }
   }
 
-  const cargarPedidos = async (riderId = rider?.id) => {
-  try {
-    if (!riderId) return
-    
-    const [disponibles, asignados] = await Promise.all([
+const cargarPedidos = async (riderId = rider?.id) => {
+    try {
+      // Validar que tenemos un riderId
+      if (!riderId) {
+        console.warn('⚠️ No hay riderId para cargar pedidos')
+        return
+      }
+      
+      console.log('📦 Cargando pedidos para rider:', riderId)
+      
+      const [disponibles, asignados] = await Promise.all([
         obtenerPedidosDisponibles(),
         obtenerPedidosAsignados(riderId)
       ])
       
-      setPedidosDisponibles(disponibles)
-      setPedidoActivo(asignados[0] || null)
+      console.log('✅ Pedidos disponibles:', disponibles?.length || 0)
+      console.log('✅ Pedidos asignados:', asignados?.length || 0)
+      
+      setPedidosDisponibles(disponibles || [])
+      setPedidoActivo(asignados?.[0] || null)
+      
     } catch (err) {
-      console.error('Error cargando pedidos:', err)
+      console.error('❌ Error cargando pedidos:', err)
+      // No mostrar error al usuario, solo en consola
+      setPedidosDisponibles([])
+      setPedidoActivo(null)
     }
   }
-
-  // ============================================
-  // SWIPE TO ACCEPT
-  // ============================================
   
   const handleTouchStart = (e, pedido) => {
     if (pedidoActivo) return // Ya tiene un pedido activo
