@@ -1,18 +1,32 @@
 import { supabase } from './supabase'
 
+// ============================================
+// FUNCIONES PARA EL RIDER - VERSION COMPLETA
+// Usa user_id (UUID) como identificador del rider
+// ============================================
+
 // Obtener perfil del rider
 export const obtenerPerfilRider = async (userId) => {
   try {
+    console.log('🔍 Buscando rider con user_id:', userId)
+    
     const { data, error } = await supabase
       .from('riders')
       .select('*')
       .eq('user_id', userId)
       .limit(1)
     
-    if (error) throw error
+    if (error) {
+      console.error('❌ Error en query de rider:', error)
+      throw error
+    }
+    
+    console.log('📊 Resultado de query riders:', data)
     
     // Si no existe el rider, crear uno básico
     if (!data || data.length === 0) {
+      console.log('⚠️ No existe rider, creando uno nuevo...')
+      
       const { data: user } = await supabase.auth.getUser()
       const nuevoRider = {
         user_id: userId,
@@ -27,15 +41,25 @@ export const obtenerPerfilRider = async (userId) => {
       const { data: riderCreado, error: errorCrear } = await supabase
         .from('riders')
         .insert(nuevoRider)
-        .select()
+        .select('*')
       
-      if (errorCrear) throw errorCrear
+      if (errorCrear) {
+        console.error('❌ Error creando rider:', errorCrear)
+        throw errorCrear
+      }
+      
+      console.log('✅ Rider creado:', riderCreado[0])
       return riderCreado[0]
     }
     
-    return data[0]
+    const rider = data[0]
+    console.log('✅ Rider encontrado - user_id:', rider.user_id)
+    console.log('✅ Rider completo:', rider)
+    
+    return rider
+    
   } catch (error) {
-    console.error('Error en obtenerPerfilRider:', error)
+    console.error('❌ Error en obtenerPerfilRider:', error)
     throw error
   }
 }
@@ -62,9 +86,11 @@ export const obtenerPedidosDisponibles = async () => {
 }
 
 // Obtener pedidos asignados al rider
-export const obtenerPedidosAsignados = async (riderId) => {
+export const obtenerPedidosAsignados = async (riderUserId) => {
   try {
-    if (!riderId) return []
+    if (!riderUserId) return []
+    
+    console.log('📦 Obteniendo pedidos asignados a user_id:', riderUserId)
     
     const { data, error } = await supabase
       .from('pedidos')
@@ -72,7 +98,7 @@ export const obtenerPedidosAsignados = async (riderId) => {
         *,
         comercio:comercios(nombre, direccion, latitud, longitud, telefono)
       `)
-      .eq('rider_id', riderId)
+      .eq('rider_id', riderUserId)
       .in('estado', ['asignado', 'en_camino', 'en_comercio', 'recogido'])
       .order('created_at', { ascending: true })
     
@@ -85,22 +111,78 @@ export const obtenerPedidosAsignados = async (riderId) => {
 }
 
 // Aceptar pedido
-export const aceptarPedido = async (pedidoId, riderId) => {
+export const aceptarPedido = async (pedidoId, riderUserId) => {
   try {
+    if (!pedidoId) {
+      throw new Error('pedidoId es requerido')
+    }
+    if (!riderUserId) {
+      throw new Error('riderUserId es requerido')
+    }
+    
+    console.log('🚀 Intentando aceptar pedido:', { pedidoId, riderUserId })
+    
+    // Verificar que el rider existe
+    const { data: riderExiste, error: errorRider } = await supabase
+      .from('riders')
+      .select('user_id, nombre_completo')
+      .eq('user_id', riderUserId)
+      .limit(1)
+    
+    if (errorRider) {
+      console.error('❌ Error verificando rider:', errorRider)
+      throw errorRider
+    }
+    
+    if (!riderExiste || riderExiste.length === 0) {
+      throw new Error(`Rider con user_id ${riderUserId} no existe en la base de datos`)
+    }
+    
+    console.log('✅ Rider verificado:', riderExiste[0])
+    
+    // Verificar que el pedido existe y está disponible
+    const { data: pedidoExiste, error: errorPedido } = await supabase
+      .from('pedidos')
+      .select('id, numero_pedido, estado, rider_id')
+      .eq('id', pedidoId)
+      .limit(1)
+    
+    if (errorPedido) {
+      console.error('❌ Error verificando pedido:', errorPedido)
+      throw errorPedido
+    }
+    
+    if (!pedidoExiste || pedidoExiste.length === 0) {
+      throw new Error(`Pedido con ID ${pedidoId} no existe`)
+    }
+    
+    if (pedidoExiste[0].rider_id) {
+      throw new Error(`Pedido ${pedidoExiste[0].numero_pedido} ya está asignado a otro rider`)
+    }
+    
+    console.log('✅ Pedido disponible:', pedidoExiste[0])
+    
+    // Actualizar el pedido
     const { data, error } = await supabase
       .from('pedidos')
       .update({
-        rider_id: riderId,
+        rider_id: riderUserId,
         estado: 'asignado',
         asignado_at: new Date().toISOString()
       })
       .eq('id', pedidoId)
       .select()
     
-    if (error) throw error
+    if (error) {
+      console.error('❌ Error asignando pedido:', error)
+      throw error
+    }
+    
+    console.log('✅ Pedido asignado exitosamente:', data[0])
     return data[0]
+    
   } catch (error) {
-    console.error('Error en aceptarPedido:', error)
+    console.error('❌ Error en aceptarPedido:', error)
     throw error
   }
 }
@@ -171,12 +253,12 @@ export const subirComprobante = async (pedidoId, archivo) => {
 }
 
 // Actualizar efectivo en mano del rider
-export const actualizarEfectivoRider = async (riderId, nuevoMonto) => {
+export const actualizarEfectivoRider = async (riderUserId, nuevoMonto) => {
   try {
     const { data, error } = await supabase
       .from('riders')
       .update({ saldo_efectivo: nuevoMonto })
-      .eq('id', riderId)
+      .eq('user_id', riderUserId)
       .select()
     
     if (error) throw error
@@ -204,7 +286,6 @@ export const obtenerConfiguracion = async () => {
       }
     }
     
-    // Si no existe configuración, retornar valores por defecto
     if (!data || data.length === 0) {
       return {
         porcentaje_rider: 66.66,
@@ -225,7 +306,7 @@ export const obtenerConfiguracion = async () => {
 }
 
 // Suscribirse a cambios en pedidos del rider
-export const suscribirPedidosRider = (riderId, callback) => {
+export const suscribirPedidosRider = (riderUserId, callback) => {
   const channel = supabase
     .channel('pedidos-rider')
     .on(
@@ -234,7 +315,7 @@ export const suscribirPedidosRider = (riderId, callback) => {
         event: '*',
         schema: 'public',
         table: 'pedidos',
-        filter: `rider_id=eq.${riderId}`
+        filter: `rider_id=eq.${riderUserId}`
       },
       (payload) => {
         console.log('Cambio en pedido:', payload)
@@ -260,9 +341,9 @@ export const suscribirPedidosRider = (riderId, callback) => {
 }
 
 // Obtener estadísticas del rider
-export const obtenerEstadisticasRider = async (riderId) => {
+export const obtenerEstadisticasRider = async (riderUserId) => {
   try {
-    if (!riderId) {
+    if (!riderUserId) {
       return {
         totalGanancia: 0,
         totalPedidos: 0,
@@ -274,7 +355,7 @@ export const obtenerEstadisticasRider = async (riderId) => {
     const { data, error } = await supabase
       .from('pedidos')
       .select('ganancia_rider, propina, created_at')
-      .eq('rider_id', riderId)
+      .eq('rider_id', riderUserId)
       .eq('estado', 'entregado')
     
     if (error) {
